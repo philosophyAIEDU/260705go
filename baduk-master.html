@@ -1,0 +1,1463 @@
+<!DOCTYPE html>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  바둑 마스터 (Baduk Master) — 1~100단계 바둑 학습 앱
+  ═══════════════════════════════════════════════════════════════════════════
+  · 단일 HTML 파일 (인라인 CSS/JS). 브라우저에서 파일을 열기만 하면 실행됩니다.
+  · 외부 라이브러리 없음. 서버/빌드 과정 불필요.
+  · 진행 상황과 API 키(동의 시)는 이 브라우저의 localStorage에만 저장됩니다.
+  · Gemini API 호출 시 보드 상태와 학습 개념 텍스트만 전송하며,
+    이름/나이 등 개인 식별 정보는 전송하지 않습니다.
+
+  [확장 안내]
+  이 구조는 이후 장기/체스 버전에서 재사용 가능하도록 레벨 데이터 구조,
+  코칭 강도 로직, Gemini 연동 함수를 최대한 게임 독립적으로 분리해 작성함.
+    - "게임 독립 계층": AGE_GROUPS, 코칭 강도(intensityForLevel, COACH_LABELS),
+      Gemini 연동(callGemini, requestCoach), 진행 저장(Progress), 시드 RNG,
+      화면 전환/레벨 선택 UI 로직
+    - "게임 종속 계층": GoEngine(바둑 규칙), TIER_CONFIG/makeLevel(바둑 레벨 생성),
+      aiPickMove(바둑 상대 AI), 보드 렌더링(canvas)
+    장기/체스 버전은 게임 종속 계층만 교체하면 됩니다.
+  ═══════════════════════════════════════════════════════════════════════════
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>바둑 마스터 — 1~100단계 바둑 학습</title>
+<style>
+  :root {
+    --fs: 16px;          /* 나이대에 따라 JS가 조정 */
+    --btn-h: 44px;
+    --wood: #dcb35c;
+    --wood-dark: #c9a04e;
+    --ink: #2d2418;
+    --paper: #faf6ee;
+    --accent: #2e7d32;
+    --accent-2: #1565c0;
+    --warn: #c62828;
+    --card: #ffffff;
+    --shadow: 0 2px 8px rgba(0,0,0,.12);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    font-size: var(--fs);
+    background: linear-gradient(160deg, #f5efe0, #e8dcc0);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+  /* 나이대별 글자/버튼 크기 (어릴수록 큼) */
+  body.age-0 { --fs: 21px; --btn-h: 58px; }
+  body.age-1 { --fs: 19px; --btn-h: 54px; }
+  body.age-2 { --fs: 17px; --btn-h: 48px; }
+  body.age-3 { --fs: 16px; --btn-h: 44px; }
+  body.age-4 { --fs: 16px; --btn-h: 44px; }
+
+  .screen { display: none; max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+  .screen.active { display: block; }
+
+  h1 { font-size: 1.9em; margin-bottom: .3em; }
+  h2 { font-size: 1.35em; margin: .6em 0 .4em; }
+  .subtitle { color: #6b5d45; margin-bottom: 1.2em; }
+
+  button {
+    font-family: inherit; font-size: 1em; cursor: pointer;
+    border: none; border-radius: 12px; min-height: var(--btn-h);
+    padding: 8px 20px; background: var(--accent); color: #fff;
+    box-shadow: var(--shadow); transition: transform .08s, filter .15s;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: scale(.97); }
+  button:disabled { background: #b9b2a3; cursor: not-allowed; }
+  button.secondary { background: #fff; color: var(--ink); border: 2px solid #cbbfa5; }
+  button.blue { background: var(--accent-2); }
+  button.big { font-size: 1.2em; padding: 12px 32px; }
+
+  .panel {
+    background: var(--paper); border-radius: 16px; padding: 20px;
+    box-shadow: var(--shadow); margin-bottom: 16px;
+  }
+  label.field-label { display: block; font-weight: 700; margin-bottom: 6px; }
+  select, input[type=password], input[type=text] {
+    font-family: inherit; font-size: 1em; width: 100%;
+    padding: 10px 12px; border: 2px solid #cbbfa5; border-radius: 10px;
+    background: #fff; color: var(--ink);
+  }
+  .hint-text { font-size: .82em; color: #7a6c52; margin-top: 6px; line-height: 1.5; }
+  .check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .check-row input { width: 1.2em; height: 1.2em; }
+
+  /* ── 레벨 선택 ── */
+  .tier-block { margin-bottom: 22px; }
+  .tier-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 6px 4px; border-bottom: 3px solid var(--wood-dark); margin-bottom: 10px;
+  }
+  .tier-head .tier-num { font-weight: 800; color: var(--accent); }
+  .tier-head .tier-coach { font-size: .78em; color: #7a6c52; margin-left: auto; }
+  .level-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px;
+  }
+  .level-card {
+    background: var(--card); border-radius: 12px; padding: 8px 6px;
+    text-align: center; box-shadow: var(--shadow); cursor: pointer;
+    border: 2px solid transparent; user-select: none;
+  }
+  .level-card:hover { border-color: var(--accent); }
+  .level-card.locked { opacity: .45; cursor: not-allowed; background: #eee6d6; }
+  .level-card.locked:hover { border-color: transparent; }
+  .level-card .lv-num { font-weight: 800; font-size: 1.05em; }
+  .level-card .lv-stars { color: #f2a900; letter-spacing: 1px; font-size: .95em; }
+  .level-card .lv-coach { font-size: .68em; color: #8b7c60; }
+  .top-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .top-bar .spacer { flex: 1; }
+
+  /* ── 학습/대국 화면 ── */
+  .play-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+  .board-col { flex: 1 1 340px; min-width: 300px; }
+  .side-col { flex: 1 1 280px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
+  #board-canvas {
+    width: 100%; max-width: 560px; display: block; margin: 0 auto;
+    border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    touch-action: manipulation;
+  }
+  .goal-box {
+    background: #fff8e6; border: 2px solid #e8c97a; border-radius: 12px;
+    padding: 12px 14px; line-height: 1.5;
+  }
+  .goal-box .goal-title { font-weight: 800; color: #8a6d1a; }
+  .status-line {
+    display: flex; gap: 14px; flex-wrap: wrap; font-size: .9em;
+    background: #fff; border-radius: 10px; padding: 8px 12px; box-shadow: var(--shadow);
+  }
+  .status-line b { color: var(--accent-2); }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .controls button { flex: 1 1 auto; min-width: 90px; }
+
+  /* 코치 말풍선 */
+  .coach-box {
+    background: var(--paper); border-radius: 16px; padding: 14px;
+    box-shadow: var(--shadow); min-height: 110px;
+  }
+  .coach-head { display: flex; align-items: center; gap: 8px; font-weight: 800; margin-bottom: 8px; }
+  .coach-head .badge {
+    font-size: .7em; font-weight: 600; background: #e3efe4; color: var(--accent);
+    border-radius: 999px; padding: 2px 10px;
+  }
+  .bubble {
+    background: #fff; border-radius: 12px; border: 1.5px solid #d9cfb8;
+    padding: 10px 12px; margin-bottom: 8px; line-height: 1.55; font-size: .95em;
+    animation: pop .18s ease-out;
+  }
+  .bubble.sys { background: #eef4ff; border-color: #b9cdf0; }
+  .bubble.err { background: #fdecec; border-color: #eebbbb; color: var(--warn); }
+  .bubble.loading { color: #8b7c60; font-style: italic; }
+  @keyframes pop { from { transform: scale(.96); opacity: .4; } to { transform: scale(1); opacity: 1; } }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: rgba(45,36,24,.92); color: #fff; padding: 10px 22px;
+    border-radius: 999px; font-size: .95em; opacity: 0; pointer-events: none;
+    transition: opacity .25s; z-index: 50; max-width: 90vw; text-align: center;
+  }
+  #toast.show { opacity: 1; }
+
+  /* ── 결과 화면 ── */
+  .result-card { text-align: center; padding: 36px 20px; }
+  .result-stars { font-size: 3em; color: #f2a900; letter-spacing: 6px; margin: 12px 0; }
+  .result-title { font-size: 1.7em; font-weight: 800; }
+  .result-msg { margin: 10px auto 22px; max-width: 460px; line-height: 1.6; }
+  .result-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+</style>
+</head>
+<body class="age-4">
+
+<!-- ════════ 1) 시작 화면 ════════ -->
+<div id="screen-start" class="screen active">
+  <h1>🏯 바둑 마스터</h1>
+  <p class="subtitle">1단계부터 100단계까지, AI 코치와 함께 차근차근 바둑을 배워요.</p>
+
+  <div class="panel">
+    <label class="field-label" for="age-select">누가 배우나요?</label>
+    <select id="age-select">
+      <option value="0">유아 (5~7세)</option>
+      <option value="1">초등 저학년</option>
+      <option value="2">초등 고학년</option>
+      <option value="3">중학생 이상</option>
+      <option value="4" selected>성인</option>
+    </select>
+    <p class="hint-text">선택에 따라 글자 크기와 설명 방식이 달라져요.</p>
+  </div>
+
+  <div class="panel">
+    <label class="field-label" for="api-key">Gemini API 키 (AI 코치용, 선택)</label>
+    <input type="password" id="api-key" placeholder="AI 코치를 쓰려면 API 키를 입력하세요" autocomplete="off">
+    <div class="check-row">
+      <input type="checkbox" id="save-key">
+      <label for="save-key">이 브라우저에 키 저장</label>
+    </div>
+    <p class="hint-text">
+      🔒 이 키는 이 브라우저에만 저장되며 외부로 전송되지 않습니다.
+      공용 컴퓨터에서는 저장하지 마세요.<br>
+      키가 없어도 AI 코치 없이 모든 단계를 플레이할 수 있어요.
+    </p>
+  </div>
+
+  <button class="big" id="btn-start">학습 시작 ▶</button>
+</div>
+
+<!-- ════════ 2) 레벨 선택 화면 ════════ -->
+<div id="screen-levels" class="screen">
+  <div class="top-bar">
+    <h1 style="font-size:1.4em">단계 선택</h1>
+    <span id="progress-summary" class="hint-text"></span>
+    <span class="spacer"></span>
+    <button class="secondary" id="btn-settings">⚙ 설정</button>
+  </div>
+  <div id="tier-list"></div>
+</div>
+
+<!-- ════════ 3) 학습/대국 화면 ════════ -->
+<div id="screen-play" class="screen">
+  <div class="top-bar">
+    <button class="secondary" id="btn-quit">← 나가기</button>
+    <h2 id="play-title" style="margin:0"></h2>
+    <span class="spacer"></span>
+    <span id="play-coach-level" class="hint-text"></span>
+  </div>
+
+  <div class="play-wrap">
+    <div class="board-col">
+      <div class="goal-box" style="margin-bottom:10px">
+        <span class="goal-title">🎯 목표: </span><span id="goal-text"></span>
+      </div>
+      <canvas id="board-canvas"></canvas>
+      <div class="status-line" style="margin-top:10px">
+        <span>차례: <b id="st-turn">흑(나)</b></span>
+        <span id="st-moves"></span>
+        <span>잡은 돌: <b id="st-caps">0</b></span>
+        <span id="st-lost"></span>
+      </div>
+      <div class="controls" style="margin-top:10px">
+        <button class="secondary" id="btn-undo">↩ 되돌리기</button>
+        <button class="secondary" id="btn-pass" style="display:none">한 수 쉼(패스)</button>
+        <button class="blue" id="btn-hint" style="display:none">💡 힌트</button>
+        <button class="secondary" id="btn-restart">🔄 처음부터</button>
+      </div>
+    </div>
+
+    <div class="side-col">
+      <div class="coach-box">
+        <div class="coach-head">🧑‍🏫 AI 코치 <span class="badge" id="coach-badge"></span></div>
+        <div id="coach-messages"></div>
+      </div>
+      <div class="panel" style="margin:0">
+        <b>📖 이번 단계 개념</b>
+        <p id="concept-text" style="margin-top:6px; line-height:1.6"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 4) 결과 화면 ════════ -->
+<div id="screen-result" class="screen">
+  <div class="panel result-card">
+    <div class="result-title" id="result-title"></div>
+    <div class="result-stars" id="result-stars"></div>
+    <p class="result-msg" id="result-msg"></p>
+    <div id="result-coach" style="max-width:520px;margin:0 auto 20px;text-align:left"></div>
+    <div class="result-btns">
+      <button class="secondary" id="btn-retry">🔄 다시 도전</button>
+      <button class="secondary" id="btn-to-levels">📋 단계 목록</button>
+      <button id="btn-next" class="big">다음 단계 ▶</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ═══════════════════════════════════════════════════════════════════════
+   § A. 게임 독립 계층 — 나이대, 저장, 시드 RNG, 코칭 강도, Gemini 연동
+   (장기/체스 버전에서 이 계층은 그대로 재사용 가능)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const AGE_GROUPS = [
+  { id: 0, name: "유아",        promptDesc: "5~7세 유아. 아주 쉬운 단어와 이모지를 써서" },
+  { id: 1, name: "초등 저학년", promptDesc: "초등학교 1~3학년 어린이. 쉬운 단어로 재미있게" },
+  { id: 2, name: "초등 고학년", promptDesc: "초등학교 4~6학년 어린이. 친근하고 명확하게" },
+  { id: 3, name: "중학생 이상", promptDesc: "중고등학생. 또래 멘토처럼 편하게" },
+  { id: 4, name: "성인",        promptDesc: "성인 학습자. 표준적인 존댓말로 간결하게" },
+];
+
+const STORE = {
+  progress: "badukMaster.progress",   // { "1": 3(별점), ... }
+  apiKey:   "badukMaster.apiKey",
+  age:      "badukMaster.age",
+};
+
+const Progress = {
+  data: {},
+  load() { try { this.data = JSON.parse(localStorage.getItem(STORE.progress) || "{}"); } catch (e) { this.data = {}; } },
+  save() { try { localStorage.setItem(STORE.progress, JSON.stringify(this.data)); } catch (e) {} },
+  stars(lv) { return this.data[lv] || 0; },
+  setStars(lv, s) { if (s > this.stars(lv)) { this.data[lv] = s; this.save(); } },
+  isUnlocked(lv) { return lv === 1 || this.stars(lv - 1) > 0; },
+  clearedCount() { return Object.keys(this.data).length; },
+};
+
+/* 시드 고정 난수 (mulberry32) — 같은 레벨은 항상 같은 문제가 나오도록 */
+function makeRng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const randInt = (rng, a, b) => a + Math.floor(rng() * (b - a + 1));
+function shuffled(rng, arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+/* ── 코칭 강도 (레벨이 오를수록 자동으로 낮아짐) ──
+   5: 매 수마다 자동 코멘트 / 4: 실수했을 때만 / 3: 힌트 버튼을 눌러야만
+   2: 끝난 후 총평 1회 / 1: 코멘트 없음(판정만) */
+function intensityForLevel(lv) {
+  if (lv <= 20) return 5;
+  if (lv <= 40) return 4;
+  if (lv <= 60) return 3;
+  if (lv <= 80) return 2;
+  return 1;
+}
+const COACH_LABELS = { 5: "많음", 4: "보통", 3: "적음", 2: "최소", 1: "없음" };
+
+/* ── Gemini API 연동 (게임 독립: 시스템/사용자 텍스트만 받아 호출) ── */
+const GEMINI_ENDPOINT =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=";
+
+async function callGemini(apiKey, systemText, userText) {
+  const res = await fetch(GEMINI_ENDPOINT + encodeURIComponent(apiKey), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: systemText }] },
+      contents: [{ role: "user", parts: [{ text: userText }] }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 300 },
+    }),
+  });
+  if (!res.ok) {
+    let msg = "HTTP " + res.status;
+    try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
+    const err = new Error(msg); err.status = res.status; throw err;
+  }
+  const data = await res.json();
+  const parts = data.candidates && data.candidates[0] && data.candidates[0].content
+    && data.candidates[0].content.parts;
+  if (!parts || !parts.length) throw new Error("응답이 비어 있어요");
+  return parts.map((p) => p.text || "").join("").trim();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   § B. 바둑 규칙 엔진 (게임 종속 계층 — 외부 라이브러리 없이 직접 구현)
+   돌 놓기 / 턴 교대 / 활로 계산 / 자동 축출 / 자살수 금지 / 코(ko) /
+   되돌리기 / Tromp-Taylor 단순화 집 계산
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const EMPTY = 0, BLACK = 1, WHITE = 2;
+
+function groupAt(board, n, x, y) {
+  // (x,y) 돌이 속한 그룹의 돌 목록과 활로(liberty) 집합을 반환
+  const color = board[y * n + x];
+  const cells = [], libs = new Set(), seen = new Set();
+  const stack = [[x, y]];
+  seen.add(y * n + x);
+  while (stack.length) {
+    const [cx, cy] = stack.pop();
+    cells.push([cx, cy]);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = cx + dx, ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+      const i = ny * n + nx;
+      const v = board[i];
+      if (v === EMPTY) libs.add(i);
+      else if (v === color && !seen.has(i)) { seen.add(i); stack.push([nx, ny]); }
+    }
+  }
+  return { color, cells, libs };
+}
+
+/* 보드 사본 위에서 착수를 시뮬레이션 (AI 후보 평가용, 원본 불변) */
+function simulateMove(board, n, x, y, color) {
+  if (board[y * n + x] !== EMPTY) return { legal: false };
+  const b = board.slice();
+  b[y * n + x] = color;
+  const opp = 3 - color;
+  let captured = 0;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const nx = x + dx, ny = y + dy;
+    if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+    if (b[ny * n + nx] === opp) {
+      const g = groupAt(b, n, nx, ny);
+      if (g.libs.size === 0) { for (const [gx, gy] of g.cells) b[gy * n + gx] = EMPTY; captured += g.cells.length; }
+    }
+  }
+  const own = groupAt(b, n, x, y);
+  if (own.libs.size === 0) return { legal: false, reason: "suicide" };
+  return { legal: true, board: b, captured, ownLibs: own.libs.size };
+}
+
+function scoreBoard(board, n) {
+  // Tromp-Taylor 단순화: 돌 수 + 한 색으로만 둘러싸인 빈 영역
+  let b = 0, w = 0;
+  const visited = new Uint8Array(n * n);
+  for (let i = 0; i < n * n; i++) {
+    if (board[i] === BLACK) b++;
+    else if (board[i] === WHITE) w++;
+  }
+  for (let i = 0; i < n * n; i++) {
+    if (board[i] !== EMPTY || visited[i]) continue;
+    const region = []; const borders = new Set(); const stack = [i];
+    visited[i] = 1;
+    while (stack.length) {
+      const cur = stack.pop();
+      region.push(cur);
+      const cx = cur % n, cy = (cur / n) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+        const j = ny * n + nx;
+        if (board[j] === EMPTY) { if (!visited[j]) { visited[j] = 1; stack.push(j); } }
+        else borders.add(board[j]);
+      }
+    }
+    if (borders.size === 1) { if (borders.has(BLACK)) b += region.length; else w += region.length; }
+  }
+  return { black: b, white: w };
+}
+
+class GoEngine {
+  constructor(n) {
+    this.n = n;
+    this.board = new Int8Array(n * n);
+    this.turn = BLACK;
+    this.captures = { [BLACK]: 0, [WHITE]: 0 }; // 그 색이 "잡은" 돌 수
+    this.history = [];   // undo용 스냅샷
+    this.positions = []; // 코(ko) 판정용 판 상태 문자열
+    this.passes = 0;
+  }
+  posKey() { return String.fromCharCode.apply(null, this.board); }
+  init() { this.positions = [this.posKey()]; }
+  get(x, y) { return this.board[y * this.n + x]; }
+  setStone(x, y, c) { this.board[y * this.n + x] = c; } // 초기 배치용(기록 없음)
+
+  play(x, y, color) {
+    const n = this.n;
+    if (x < 0 || y < 0 || x >= n || y >= n) return { ok: false, reason: "range" };
+    if (this.get(x, y) !== EMPTY) return { ok: false, reason: "occupied" };
+    const sim = simulateMove(this.board, n, x, y, color);
+    if (!sim.legal) return { ok: false, reason: "suicide" };
+    // 코 규칙: 직전과 동일한 판 상태로 즉시 되돌리는 수 금지
+    const key = String.fromCharCode.apply(null, sim.board);
+    if (this.positions.length >= 2 && key === this.positions[this.positions.length - 2]) {
+      return { ok: false, reason: "ko" };
+    }
+    this.history.push({
+      board: this.board, turn: this.turn, passes: this.passes,
+      captures: { [BLACK]: this.captures[BLACK], [WHITE]: this.captures[WHITE] },
+      move: { x, y, color },
+    });
+    this.board = sim.board;
+    this.positions.push(key);
+    this.captures[color] += sim.captured;
+    this.passes = 0;
+    this.turn = 3 - color;
+    return { ok: true, captured: sim.captured };
+  }
+
+  pass(color) {
+    this.history.push({
+      board: this.board, turn: this.turn, passes: this.passes,
+      captures: { [BLACK]: this.captures[BLACK], [WHITE]: this.captures[WHITE] },
+      move: null,
+    });
+    this.positions.push(this.posKey());
+    this.passes++;
+    this.turn = 3 - color;
+  }
+
+  undo() {
+    if (!this.history.length) return false;
+    const h = this.history.pop();
+    this.board = h.board;
+    this.turn = h.turn;
+    this.passes = h.passes;
+    this.captures = h.captures;
+    this.positions.pop();
+    return true;
+  }
+
+  lastMove() {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      if (this.history[i].move) {
+        // history[i].move는 i번째 착수 — 마지막 착수는 최신 항목의 move
+        break;
+      }
+    }
+    const h = this.history[this.history.length - 1];
+    return h ? h.move : null;
+  }
+
+  blackMoveCount() {
+    return this.history.filter((h) => h.move && h.move.color === BLACK).length;
+  }
+
+  score() { return scoreBoard(this.board, this.n); }
+
+  /* 보드를 텍스트로 직렬화 (Gemini 프롬프트용) */
+  serialize() {
+    const letters = "ABCDEFGHJKLMNOPQRST"; // 관례상 I 제외
+    const n = this.n;
+    let out = "   " + letters.slice(0, n).split("").join(" ") + "\n";
+    for (let y = 0; y < n; y++) {
+      const row = [];
+      for (let x = 0; x < n; x++) {
+        const v = this.get(x, y);
+        row.push(v === BLACK ? "X" : v === WHITE ? "O" : ".");
+      }
+      out += String(n - y).padStart(2) + " " + row.join(" ") + "\n";
+    }
+    return out;
+  }
+  coordName(x, y) {
+    const letters = "ABCDEFGHJKLMNOPQRST";
+    return letters[x] + (this.n - y);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   § C. 레벨 데이터 & 절차적 생성 (게임 종속 계층)
+   100개 레벨을 손으로 만들지 않고, 티어별 개념 + difficulty(1~10)
+   파라미터로 돌 배치 개수/복잡도/제한 수를 변주해 생성
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const TIER_CONFIG = [
+  { tier: 1,  concept: "돌 놓기와 기본 규칙", boardSize: 9,  difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 2,  concept: "활로와 축출",         boardSize: 9,  difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 3,  concept: "이어붙이기",           boardSize: 9,  difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 4,  concept: "집 만들기 기초",       boardSize: 9,  difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 5,  concept: "사활(살고 죽기)",      boardSize: 9,  difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 6,  concept: "축과 장문",            boardSize: 9,  difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 7,  concept: "끝내기",               boardSize: 9,  difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 8,  concept: "포석과 전략",          boardSize: 13, difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 9,  concept: "실전 응용",            boardSize: 13, difficulty: [1,2,3,4,5,6,7,8,9,10] },
+  { tier: 10, concept: "종합 실전",            boardSize: 19, difficulty: [1,2,3,4,5,6,7,8,9,10] },
+];
+
+/* 티어별 개념 설명 (std: 표준 / kid: 유아·저학년용 쉬운 말 + 이모지) */
+const TIER_TEXT = {
+  1: { std: "바둑돌은 선이 만나는 '점' 위에 놓습니다. 흑과 백이 번갈아 한 수씩 두고, 이미 돌이 있는 곳에는 둘 수 없어요.",
+       kid: "바둑돌은 줄이 만나는 점 위에 콕! 놓아요 😊 나는 까만 돌, 친구는 하얀 돌을 번갈아 놓아요." },
+  2: { std: "돌에 붙어 있는 빈 점을 '활로'라고 합니다. 활로가 전부 막히면 그 돌은 잡혀서 판에서 나갑니다.",
+       kid: "돌이 숨 쉬는 길을 '활로'라고 해요 🌬️ 숨길이 다 막히면 돌이 잡혀요! 하얀 돌의 숨길을 막아 볼까요?" },
+  3: { std: "떨어져 있는 내 돌들을 이으면 하나의 큰 그룹이 되어 활로가 늘고 훨씬 튼튼해집니다. 끊기면 각각 약해져요.",
+       kid: "내 돌 친구들이 손을 잡으면 힘이 세져요 🤝 떨어져 있는 까만 돌들을 이어 주세요!" },
+  4: { std: "빈 곳을 내 돌로 둘러싸면 '집'이 됩니다. 대국이 끝났을 때 집이 많은 쪽이 승리합니다.",
+       kid: "내 돌로 빈 곳을 빙 둘러싸면 내 '집'이 돼요 🏠 집이 많은 사람이 이겨요!" },
+  5: { std: "둘러싸여도 내부에 눈(독립된 집) 두 개를 만들면 절대 잡히지 않습니다. 사는 모양과 죽는 모양을 익혀 보세요.",
+       kid: "빙 둘러싸여도 눈👀 두 개를 만들면 절대 안 잡혀요! 내 돌들을 끝까지 지켜 주세요." },
+  6: { std: "'축'은 상대 돌을 계단 모양으로 계속 단수로 몰아 잡는 기술입니다. 모는 방향을 잘 정해야 성공해요.",
+       kid: "계단처럼 콩콩콩 몰아가서 잡는 걸 '축'이라고 해요 🪜 하얀 돌을 구석까지 몰아 보세요!" },
+  7: { std: "끝내기는 대국 막바지에 경계선을 마무리하는 단계입니다. 한 집 차이로 승패가 갈리니 꼼꼼하게 지키고 넓히세요.",
+       kid: "이제 마지막 정리 시간이에요 🧹 내 집 문을 꼭꼭 닫고, 한 집이라도 더 만들어 봐요!" },
+  8: { std: "포석은 대국 초반에 좋은 자리를 선점하는 전략입니다. 귀 → 변 → 중앙 순서로 큰 곳부터 차지하세요.",
+       kid: "바둑판에서 좋은 자리 먼저 앉기! 구석(귀)부터 차지하는 게 유리해요 🏃‍♂️" },
+  9: { std: "지금까지 배운 활로, 연결, 집, 사활을 모두 활용해 실전 대국을 해 봅니다. 코치 도움은 거의 없어요.",
+       kid: "배운 것을 모두 써서 진짜 시합을 해 봐요 💪 이제 혼자서도 잘할 수 있어요!" },
+  10:{ std: "정식 19줄 바둑판에서 종합 실전 대국입니다. AI 도움 없이 스스로의 힘으로 승리해 보세요.",
+       kid: "제일 큰 바둑판에서 진짜 대결! 지금까지 배운 걸 다 보여 주세요 🏆" },
+};
+
+/* 8가지 대칭 변환 — 생성 문제의 방향을 레벨마다 다르게 */
+function transformPoint(x, y, n, o) {
+  const m = n - 1;
+  switch (o & 7) {
+    case 0: return [x, y];         case 1: return [m - x, y];
+    case 2: return [x, m - y];     case 3: return [m - x, m - y];
+    case 4: return [y, x];         case 5: return [m - y, x];
+    case 6: return [y, m - x];     case 7: return [m - y, m - x];
+  }
+}
+
+/* 레벨 번호(1~100) → 레벨 데이터 생성 */
+function makeLevel(lv) {
+  const tierIdx = Math.floor((lv - 1) / 10);        // 0~9
+  const cfg = TIER_CONFIG[tierIdx];
+  const d = cfg.difficulty[(lv - 1) % 10];          // 1~10
+  const n = cfg.boardSize;
+  const rng = makeRng(lv * 1013904223 + 12345);     // 레벨마다 고정 시드
+  const orient = randInt(rng, 0, 7);
+  const T = (x, y) => transformPoint(x, y, n, orient);
+
+  const L = {
+    level: lv, tier: cfg.tier, tierName: cfg.concept, difficulty: d,
+    boardSize: n, intensity: intensityForLevel(lv),
+    conceptText: TIER_TEXT[cfg.tier],
+    stones: [],            // 초기 배치 [{x,y,c}]
+    marked: [],            // 강조 표시할 돌 (목표 대상)
+    goal: null,            // {type, ...}
+    whiteAI: "none",
+    goalText: "",
+  };
+  const put = (x, y, c) => { const [tx, ty] = T(x, y); L.stones.push({ x: tx, y: ty, c }); return [tx, ty]; };
+
+  switch (cfg.tier) {
+    /* ── 티어 1: 돌 놓기와 기본 규칙 — 합법적인 착수 N번 ── */
+    case 1: {
+      const need = 2 + Math.ceil(d / 2); // 3~7수
+      const deco = Math.floor(d / 3);    // 장식용 돌 (난이도 따라 판이 복잡해짐)
+      for (let i = 0; i < deco; i++) {
+        put(randInt(rng, 1, n - 2), randInt(rng, 1, n - 2), BLACK);
+        put(randInt(rng, 1, n - 2), randInt(rng, 1, n - 2), WHITE);
+      }
+      L.goal = { type: "placeN", need, moveLimit: need };
+      L.whiteAI = d >= 3 ? "random" : "none"; // 3단계부터 상대도 둠 (턴 교대 학습)
+      L.goalText = `빈 점을 골라 돌을 ${need}번 올바르게 놓아 보세요.`;
+      break;
+    }
+    /* ── 티어 2: 활로와 축출 — 표시된 백돌 잡기 ── */
+    case 2: {
+      const size = 1 + Math.floor((d - 1) / 3);          // 백 그룹 크기 1~4
+      const keepLibs = d <= 3 ? 1 : 2;                   // 남겨 둘 활로 수
+      const cells = [[randInt(rng, 2, n - 3), randInt(rng, 2, n - 3)]];
+      while (cells.length < size) {
+        const [bx, by] = cells[randInt(rng, 0, cells.length - 1)];
+        const dirs = shuffled(rng, [[1, 0], [-1, 0], [0, 1], [0, -1]]);
+        for (const [dx, dy] of dirs) {
+          const nx = bx + dx, ny = by + dy;
+          if (nx >= 1 && ny >= 1 && nx <= n - 2 && ny <= n - 2 &&
+              !cells.some((c) => c[0] === nx && c[1] === ny)) { cells.push([nx, ny]); break; }
+        }
+      }
+      const inCells = (x, y) => cells.some((c) => c[0] === x && c[1] === y);
+      const boundary = [];
+      for (const [cx, cy] of cells) {
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+          if (!inCells(nx, ny) && !boundary.some((b) => b[0] === nx && b[1] === ny)) boundary.push([nx, ny]);
+        }
+      }
+      const openLibs = shuffled(rng, boundary).slice(0, keepLibs);
+      let origin = null;
+      for (const [cx, cy] of cells) { const p = put(cx, cy, WHITE); if (!origin) origin = p; L.marked.push(p); }
+      for (const [bx, by] of boundary) {
+        if (!openLibs.some((o) => o[0] === bx && o[1] === by)) put(bx, by, BLACK);
+      }
+      L.goal = { type: "captureMarked", origin, moveLimit: keepLibs + 2 + Math.floor(d / 2) };
+      L.whiteAI = d >= 5 ? "defend" : "none"; // 후반: 백이 달아나려고 함
+      L.goalText = `▲ 표시된 백돌의 활로를 모두 막아 ${keepLibs + 2 + Math.floor(d / 2)}수 안에 잡으세요.`;
+      break;
+    }
+    /* ── 티어 3: 이어붙이기 — 두 흑 그룹 연결 ── */
+    case 3: {
+      const gap = 1 + Math.floor((d - 1) / 4);           // 벌어진 칸 1~3
+      const r = randInt(rng, 2, n - 3);
+      const x0 = randInt(rng, 2, n - 3 - gap);
+      const pa = put(x0 - 1, r, BLACK); put(x0 - 2, r, BLACK);
+      const pb = put(x0 + gap, r, BLACK); put(x0 + gap + 1, r, BLACK);
+      L.marked.push(pa, pb);
+      const threats = Math.min(2 * gap, 1 + Math.floor(d / 3)); // 끊으려는 백돌
+      let placedT = 0;
+      for (let g = 0; g < gap && placedT < threats; g++) {
+        if (r - 1 >= 0 && placedT < threats) { put(x0 + g, r - 1, WHITE); placedT++; }
+        if (r + 1 < n && placedT < threats) { put(x0 + g, r + 1, WHITE); placedT++; }
+      }
+      L.goal = { type: "connect", a: pa, b: pb, moveLimit: gap + 1 + Math.floor(d / 3) };
+      L.whiteAI = d >= 4 ? "randomSafe" : "none";
+      L.goalText = "▲ 표시된 두 흑돌 무리를 하나로 이어 주세요.";
+      // 백 AI가 연결점을 막아버리면 풀 수 없으므로 그 지점은 피하도록 표시
+      L.avoidForAI = [];
+      for (let g = 0; g < gap; g++) L.avoidForAI.push(T(x0 + g, r));
+      break;
+    }
+    /* ── 티어 4: 집 만들기 기초 — 짧은 대국 후 집 비교 ── */
+    case 4: {
+      put(2, 2, BLACK); put(n - 3, n - 3, BLACK);
+      put(n - 3, 2, WHITE); put(2, n - 3, WHITE);
+      if (d >= 6) { put(Math.floor(n / 2), Math.floor(n / 2), WHITE); } // 후반: 백이 중앙 선점
+      L.goal = { type: "score", margin: 1, plyCap: 16 + 2 * d };
+      L.whiteAI = "greedy";
+      L.goalText = `${16 + 2 * d}수 안에 대국을 마치고 집(영역)에서 앞서세요. 패스 2번이면 바로 계산해요.`;
+      break;
+    }
+    /* ── 티어 5: 사활 — 표시된 내 돌 지켜서 살아남기 ── */
+    case 5: {
+      const w = 3, h = d <= 3 ? 3 : 2;  // 안쪽 공간 (난이도↑ = 좁아짐)
+      const wall = [];
+      for (let x = 0; x <= w; x++) wall.push([x, h]);
+      for (let y = 0; y < h; y++) wall.push([w, y]);
+      for (const [x, y] of wall) L.marked.push(put(x, y, BLACK));
+      for (let x = 0; x <= w + 1 && x < n; x++) put(x, h + 1, WHITE);
+      for (let y = 0; y <= h; y++) put(w + 1, y, WHITE);
+      if (d >= 8) put(1, 1, WHITE); // 최고 난도: 급소에 백이 먼저 들어와 있음
+      const surviveMoves = 4 + Math.floor(d / 2);
+      L.goal = { type: "survive", need: surviveMoves, moveLimit: surviveMoves + 4 };
+      L.whiteAI = d >= 4 ? "attack" : "none";
+      L.goalText = `▲ 표시된 흑돌이 잡히지 않게 ${surviveMoves}수를 버티세요. (눈 두 개를 만들면 안전!)`;
+      break;
+    }
+    /* ── 티어 6: 축과 장문 — 계단 몰이로 백돌 잡기 ── */
+    case 6: {
+      const dist = 2 + Math.floor(d / 3);               // 축이 굴러갈 거리 2~5
+      const c = Math.max(2, n - 2 - dist);
+      const origin = put(c, c, WHITE);
+      L.marked.push(origin);
+      put(c - 1, c, BLACK); put(c, c - 1, BLACK); put(c - 1, c + 1, BLACK); // 축 성립 조건
+      const distractors = Math.floor(d / 4);            // 시선을 끄는 백돌 (축 경로 밖)
+      for (let i = 0; i < distractors; i++) put(randInt(rng, 0, Math.max(0, c - 3)), randInt(rng, 0, Math.max(0, c - 3)), WHITE);
+      L.goal = { type: "captureMarked", origin, moveLimit: 2 * (n - 1 - c) + 4 };
+      L.whiteAI = "ladder"; // 단수되면 계속 달아남 → 방향이 틀리면 놓침
+      L.goalText = "▲ 표시된 백돌을 계단(축)으로 몰아서 잡으세요. 몰아가는 방향이 중요해요!";
+      break;
+    }
+    /* ── 티어 7: 끝내기 — 반쯤 완성된 판에서 경계 마무리 ── */
+    case 7: {
+      const bx = 3, wx = n - 4;
+      const gaps = d >= 4 ? 1 + Math.floor(d / 6) : 0;
+      const bGapYs = new Set(); const wGapYs = new Set();
+      for (let i = 0; i < gaps; i++) { bGapYs.add(randInt(rng, 1, n - 2)); wGapYs.add(randInt(rng, 1, n - 2)); }
+      for (let y = 1; y < n - 1; y++) {
+        if (!bGapYs.has(y)) put(bx, y, BLACK);
+        if (!wGapYs.has(y)) put(wx, y, WHITE);
+      }
+      put(1, Math.floor(n / 2), BLACK); put(n - 2, Math.floor(n / 2), WHITE);
+      L.goal = { type: "score", margin: 1, plyCap: 10 + d };
+      L.whiteAI = "greedy";
+      L.goalText = `${10 + d}수 안에 경계를 마무리하고 집에서 앞서세요. 열린 틈을 먼저 막는 게 핵심!`;
+      break;
+    }
+    /* ── 티어 8: 포석과 전략 (13줄) ── */
+    case 8: {
+      if (d >= 5) { put(3, 3, WHITE); } // 후반: 백이 귀 하나 선점하고 시작
+      if (d >= 9) { put(n - 4, n - 4, WHITE); }
+      L.goal = { type: "score", margin: 1 + Math.floor(d / 4), plyCap: 24 + 2 * d };
+      L.whiteAI = "greedy";
+      L.goalText = `귀부터 큰 자리를 차지하며 ${24 + 2 * d}수 안에 ${1 + Math.floor(d / 4)}집 이상 앞서세요.`;
+      break;
+    }
+    /* ── 티어 9: 실전 응용 (13줄) ── */
+    case 9: {
+      L.goal = { type: "score", margin: 2 + Math.floor(d / 4), plyCap: 30 + 2 * d };
+      L.whiteAI = "greedy";
+      L.goalText = `실전 대국! ${30 + 2 * d}수 안에 ${2 + Math.floor(d / 4)}집 이상 앞서세요.`;
+      break;
+    }
+    /* ── 티어 10: 종합 실전 (19줄) ── */
+    case 10: {
+      if (d <= 3) { put(3, 3, BLACK); put(n - 4, n - 4, BLACK); } // 초반엔 흑에게 덤 돌
+      L.goal = { type: "score", margin: 2 + Math.floor(d / 3), plyCap: 36 + 2 * d };
+      L.whiteAI = "greedy";
+      L.goalText = `정식 19줄 판! ${36 + 2 * d}수 안에 ${2 + Math.floor(d / 3)}집 이상 앞서세요.`;
+      break;
+    }
+  }
+  return L;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   § D. 상대(백) AI — 간단한 규칙 기반 (게임 종속 계층)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function findMarkedGroup(engine, level) {
+  // 표시된 원점 돌이 아직 판에 있으면 그 그룹 반환
+  if (!level.goal || !level.goal.origin) return null;
+  const [ox, oy] = level.goal.origin;
+  if (engine.get(ox, oy) !== WHITE) return null;
+  return groupAt(engine.board, engine.n, ox, oy);
+}
+
+function aiPickMove(engine, level) {
+  const n = engine.n, board = engine.board;
+  const style = level.whiteAI;
+  if (style === "none") return null;
+  const rng = Math.random;
+  const avoid = new Set((level.avoidForAI || []).map(([x, y]) => y * n + x));
+
+  const legalOk = (x, y, minLibs = 1) => {
+    if (avoid.has(y * n + x)) return null;
+    const sim = simulateMove(board, n, x, y, WHITE);
+    if (!sim.legal) return null;
+    if (sim.captured === 0 && sim.ownLibs < minLibs) return null;
+    // 코 확인은 실제 play()에서 다시 걸러짐
+    return sim;
+  };
+
+  /* ladder/defend: 표시된 그룹이 단수(활로 1)면 달아나기 시도 */
+  if (style === "ladder" || style === "defend") {
+    const g = findMarkedGroup(engine, level);
+    if (g && g.libs.size === 1) {
+      const li = g.libs.values().next().value;
+      const lx = li % n, ly = (li / n) | 0;
+      const sim = simulateMove(board, n, lx, ly, WHITE);
+      // 달아나서 활로가 2 이상 생길 때만 (안 되면 포기 = 잡힘)
+      if (sim.legal && (sim.ownLibs >= 2 || sim.captured > 0)) return { x: lx, y: ly };
+    }
+    if (style === "defend") return null; // 그 외엔 가만히
+    if (level.difficulty < 6) return null;
+    // 높은 난도의 ladder는 다른 곳에 랜덤 착수 (집중력 시험)
+  }
+
+  /* attack: 표시된 흑 그룹의 활로를 줄이는 수 */
+  if (style === "attack") {
+    const [ox, oy] = level.goal ? (level.marked[0] || [0, 0]) : [0, 0];
+    if (engine.get(ox, oy) === BLACK) {
+      const g = groupAt(board, n, ox, oy);
+      let best = null, bestLibs = Infinity;
+      for (const li of g.libs) {
+        const lx = li % n, ly = (li / n) | 0;
+        const sim = legalOk(lx, ly, 2);
+        if (!sim) continue;
+        const after = groupAt(sim.board, n, ox, oy);
+        const libsAfter = engine.get(ox, oy) === BLACK && sim.board[oy * n + ox] === BLACK ? after.libs.size : 0;
+        if (libsAfter < bestLibs) { bestLibs = libsAfter; best = { x: lx, y: ly }; }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
+  /* greedy: ① 단수인 흑 그룹 따내기 ② 내 단수 그룹 살리기 ③ 돌 근처 랜덤 */
+  if (style === "greedy") {
+    const seen = new Set();
+    let bestCap = null, bestCapSize = 0;
+    for (let i = 0; i < n * n; i++) {
+      if (board[i] === BLACK && !seen.has(i)) {
+        const g = groupAt(board, n, i % n, (i / n) | 0);
+        g.cells.forEach(([cx, cy]) => seen.add(cy * n + cx));
+        if (g.libs.size === 1 && g.cells.length > bestCapSize) {
+          const li = g.libs.values().next().value;
+          const sim = simulateMove(board, n, li % n, (li / n) | 0, WHITE);
+          if (sim.legal) { bestCap = { x: li % n, y: (li / n) | 0 }; bestCapSize = g.cells.length; }
+        }
+      }
+    }
+    if (bestCap) return bestCap;
+    seen.clear();
+    for (let i = 0; i < n * n; i++) {
+      if (board[i] === WHITE && !seen.has(i)) {
+        const g = groupAt(board, n, i % n, (i / n) | 0);
+        g.cells.forEach(([cx, cy]) => seen.add(cy * n + cx));
+        if (g.libs.size === 1 && g.cells.length >= 2) {
+          const li = g.libs.values().next().value;
+          const sim = legalOk(li % n, (li / n) | 0, 2);
+          if (sim) return { x: li % n, y: (li / n) | 0 };
+        }
+      }
+    }
+  }
+
+  /* 공통 마무리: 돌 근처 빈 점 중 랜덤 (자기 눈 메우기/자살수 회피) */
+  const candidates = [];
+  let hasStones = false;
+  for (let i = 0; i < n * n; i++) if (board[i] !== EMPTY) { hasStones = true; break; }
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      if (board[y * n + x] !== EMPTY || avoid.has(y * n + x)) continue;
+      if (hasStones) {
+        let near = false;
+        for (let dy = -2; dy <= 2 && !near; dy++)
+          for (let dx = -2; dx <= 2 && !near; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx >= 0 && ny >= 0 && nx < n && ny < n && board[ny * n + nx] !== EMPTY) near = true;
+          }
+        if (!near) continue;
+      } else {
+        if (x < 2 || y < 2 || x > n - 3 || y > n - 3) continue; // 빈 판이면 안쪽부터
+      }
+      // 자기 눈(사방이 모두 백) 메우기 금지
+      let allOwn = true;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+        if (board[ny * n + nx] !== WHITE) { allOwn = false; break; }
+      }
+      if (allOwn) continue;
+      candidates.push([x, y]);
+    }
+  }
+  // 무작위 순서로 최대 30개만 검사
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1)); [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+  for (const [x, y] of candidates.slice(0, 30)) {
+    const sim = legalOk(x, y, 2);
+    if (sim) return { x, y };
+  }
+  return null; // 둘 곳 없음 → 패스
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   § E. 앱 상태 & UI
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const $ = (id) => document.getElementById(id);
+const App = {
+  ageIdx: 4,
+  apiKey: "",
+  level: null,      // 현재 레벨 데이터
+  engine: null,
+  busy: false,      // AI/애니메이션 중 입력 잠금
+  finished: false,
+  illegalCount: 0,
+  coachBusy: false,
+  lastAutoCoach: 0,
+};
+
+function kidMode() { return App.ageIdx <= 1; }
+function TXT(std, kid) { return kidMode() ? kid : std; }
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  $(id).classList.add("active");
+  window.scrollTo(0, 0);
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+/* ── 시작 화면 ── */
+function initStartScreen() {
+  Progress.load();
+  const savedAge = localStorage.getItem(STORE.age);
+  if (savedAge !== null) { $("age-select").value = savedAge; }
+  const savedKey = localStorage.getItem(STORE.apiKey);
+  if (savedKey) { $("api-key").value = savedKey; $("save-key").checked = true; }
+  applyAge(parseInt($("age-select").value, 10));
+
+  $("age-select").addEventListener("change", () => applyAge(parseInt($("age-select").value, 10)));
+  $("btn-start").addEventListener("click", () => {
+    App.ageIdx = parseInt($("age-select").value, 10);
+    App.apiKey = $("api-key").value.trim();
+    localStorage.setItem(STORE.age, String(App.ageIdx));
+    if ($("save-key").checked && App.apiKey) localStorage.setItem(STORE.apiKey, App.apiKey);
+    else localStorage.removeItem(STORE.apiKey);
+    renderLevelSelect();
+    showScreen("screen-levels");
+  });
+  $("btn-settings").addEventListener("click", () => showScreen("screen-start"));
+}
+function applyAge(idx) {
+  App.ageIdx = idx;
+  document.body.className = "age-" + idx;
+}
+
+/* ── 레벨 선택 화면 ── */
+function renderLevelSelect() {
+  const wrap = $("tier-list");
+  wrap.innerHTML = "";
+  const cleared = Progress.clearedCount();
+  $("progress-summary").textContent = cleared > 0 ? `지금까지 ${cleared}단계 완료! 🎉` : "";
+
+  for (const cfg of TIER_CONFIG) {
+    const block = document.createElement("div");
+    block.className = "tier-block";
+    const startLv = (cfg.tier - 1) * 10 + 1;
+    const inten = intensityForLevel(startLv);
+    block.innerHTML = `
+      <div class="tier-head">
+        <span class="tier-num">티어 ${cfg.tier}</span>
+        <span>${cfg.concept}</span>
+        <span class="tier-coach">바둑판 ${cfg.boardSize}줄 · AI 도움: ${COACH_LABELS[inten]}</span>
+      </div>`;
+    const grid = document.createElement("div");
+    grid.className = "level-grid";
+    for (let i = 0; i < 10; i++) {
+      const lv = startLv + i;
+      const unlocked = Progress.isUnlocked(lv);
+      const stars = Progress.stars(lv);
+      const card = document.createElement("div");
+      card.className = "level-card" + (unlocked ? "" : " locked");
+      card.innerHTML = `
+        <div class="lv-num">${unlocked ? lv + "단계" : "🔒 " + lv}</div>
+        <div class="lv-stars">${"★".repeat(stars)}${"☆".repeat(Math.max(0, 3 - stars)) }</div>
+        <div class="lv-coach">도움 ${COACH_LABELS[intensityForLevel(lv)]}</div>`;
+      if (unlocked) card.addEventListener("click", () => startLevel(lv));
+      else card.addEventListener("click", () => toast(TXT("이전 단계를 먼저 완료하세요!", "앞 단계를 먼저 깨야 열려요! 🔑")));
+      grid.appendChild(card);
+    }
+    block.appendChild(grid);
+    wrap.appendChild(block);
+  }
+}
+
+/* ── 학습/대국 화면 ── */
+function startLevel(lv) {
+  const level = makeLevel(lv);
+  App.level = level;
+  App.engine = new GoEngine(level.boardSize);
+  for (const s of level.stones) App.engine.setStone(s.x, s.y, s.c);
+  App.engine.init();
+  App.busy = false;
+  App.finished = false;
+  App.illegalCount = 0;
+  App.lastAutoCoach = 0;
+  App.blackPassStreak = 0; // 학습자가 연속 2번 패스하면 바로 계가
+
+  $("play-title").textContent = `${lv}단계 · ${level.tierName}`;
+  $("play-coach-level").textContent = `AI 도움: ${COACH_LABELS[level.intensity]}`;
+  $("goal-text").textContent = level.goalText;
+  $("concept-text").textContent = kidMode() ? level.conceptText.kid : level.conceptText.std;
+  $("coach-badge").textContent = "도움 " + COACH_LABELS[level.intensity];
+  $("coach-messages").innerHTML = "";
+  $("btn-hint").style.display = level.intensity === 3 ? "" : "none";
+  $("btn-pass").style.display = level.goal.type === "score" ? "" : "none";
+
+  const intro = {
+    5: TXT("매 수마다 내가 도와줄게요. 편하게 두어 보세요!", "선생님이 옆에서 다 도와줄게요! 걱정 말고 놓아 보세요 😊"),
+    4: TXT("실수했을 때만 알려 드릴게요. 스스로 생각해 보세요.", "실수하면 살짝 알려 줄게요. 먼저 혼자 해 봐요! 💪"),
+    3: TXT("도움이 필요하면 힌트 버튼을 눌러 주세요.", "막히면 💡힌트 버튼을 눌러요!"),
+    2: TXT("이번엔 끝난 뒤에 총평만 해 드릴게요. 혼자 힘으로!", "다 끝나면 선생님이 이야기해 줄게요. 혼자 해 보자! 🌟"),
+    1: TXT("이제 코치 없이 실력을 보여줄 시간이에요!", "이제 진짜 바둑 기사처럼 혼자 두는 거예요! 🏆"),
+  }[level.intensity];
+  addBubble(intro, "sys");
+  if (!App.apiKey && level.intensity >= 2 && level.intensity <= 5) {
+    addBubble(TXT("(API 키가 없어 AI 코멘트는 쉬어요. 게임은 그대로 즐길 수 있어요!)",
+                  "(지금은 코치 선생님이 잠깐 자리를 비웠어요. 그래도 게임은 할 수 있어요!)"), "sys");
+  }
+
+  resizeBoard();
+  renderBoard();
+  updateStatus();
+  showScreen("screen-play");
+}
+
+/* ── 보드 렌더링 (canvas) ── */
+const canvas = $("board-canvas");
+const ctx = canvas.getContext("2d");
+
+function resizeBoard() {
+  const holder = canvas.parentElement;
+  const cssSize = Math.min(holder.clientWidth || 360, 560);
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.height = cssSize + "px";
+  canvas.width = cssSize * dpr;
+  canvas.height = cssSize * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function boardMetrics() {
+  const cssSize = canvas.width / (window.devicePixelRatio || 1);
+  const n = App.engine.n;
+  const cell = cssSize / (n + 1);
+  return { cssSize, n, cell, pad: cell };
+}
+
+function hoshiPoints(n) {
+  if (n === 9) return [[2, 2], [6, 2], [2, 6], [6, 6], [4, 4]];
+  if (n === 13) return [[3, 3], [9, 3], [3, 9], [9, 9], [6, 6]];
+  if (n === 19) return [[3, 3], [9, 3], [15, 3], [3, 9], [9, 9], [15, 9], [3, 15], [9, 15], [15, 15]];
+  return [];
+}
+
+function renderBoard() {
+  const { cssSize, n, cell, pad } = boardMetrics();
+  ctx.clearRect(0, 0, cssSize, cssSize);
+  // 나무판
+  const grad = ctx.createLinearGradient(0, 0, cssSize, cssSize);
+  grad.addColorStop(0, "#e2bc6b"); grad.addColorStop(1, "#d0a750");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, cssSize, cssSize);
+  // 격자
+  ctx.strokeStyle = "#4a3b22";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const p = pad + i * cell;
+    ctx.moveTo(pad, p); ctx.lineTo(pad + (n - 1) * cell, p);
+    ctx.moveTo(p, pad); ctx.lineTo(p, pad + (n - 1) * cell);
+  }
+  ctx.stroke();
+  // 화점
+  ctx.fillStyle = "#4a3b22";
+  for (const [hx, hy] of hoshiPoints(n)) {
+    ctx.beginPath();
+    ctx.arc(pad + hx * cell, pad + hy * cell, Math.max(2.5, cell * 0.09), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 돌
+  const r = cell * 0.46;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const v = App.engine.get(x, y);
+      if (v === EMPTY) continue;
+      const cx = pad + x * cell, cy = pad + y * cell;
+      const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.35, r * 0.1, cx, cy, r);
+      if (v === BLACK) { g.addColorStop(0, "#555"); g.addColorStop(1, "#0a0a0a"); }
+      else { g.addColorStop(0, "#ffffff"); g.addColorStop(1, "#cfcfcf"); }
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,.35)"; ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+  }
+  // 목표 돌 표시(▲)
+  ctx.fillStyle = "#e53935";
+  for (const [mx, my] of App.level.marked) {
+    if (App.engine.get(mx, my) === EMPTY) continue;
+    const cx = pad + mx * cell, cy = pad + my * cell;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r * 0.5);
+    ctx.lineTo(cx - r * 0.45, cy + r * 0.35);
+    ctx.lineTo(cx + r * 0.45, cy + r * 0.35);
+    ctx.closePath(); ctx.fill();
+  }
+  // 마지막 수 표시
+  const last = App.engine.lastMove();
+  if (last) {
+    const cx = pad + last.x * cell, cy = pad + last.y * cell;
+    ctx.strokeStyle = last.color === BLACK ? "#fff" : "#000";
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 0.45, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
+canvas.addEventListener("click", (ev) => {
+  if (App.busy || App.finished || !App.engine) return;
+  const rect = canvas.getBoundingClientRect();
+  const { n, cell, pad } = boardMetrics();
+  const scale = (canvas.width / (window.devicePixelRatio || 1)) / rect.width;
+  const x = Math.round(((ev.clientX - rect.left) * scale - pad) / cell);
+  const y = Math.round(((ev.clientY - rect.top) * scale - pad) / cell);
+  if (x < 0 || y < 0 || x >= n || y >= n) return;
+  playerMove(x, y);
+});
+
+window.addEventListener("resize", () => {
+  if ($("screen-play").classList.contains("active") && App.engine) { resizeBoard(); renderBoard(); }
+});
+
+/* ── 진행 상태 표시 ── */
+function updateStatus() {
+  const e = App.engine, L = App.level;
+  $("st-caps").textContent = e.captures[BLACK];
+  $("st-lost").innerHTML = e.captures[WHITE] > 0 ? `잃은 돌: <b>${e.captures[WHITE]}</b>` : "";
+  $("st-turn").textContent = App.finished ? "끝" : (e.turn === BLACK ? "흑(나)" : "백(상대)");
+  const g = L.goal;
+  if (g.type === "score") {
+    const plies = e.history.length;
+    $("st-moves").innerHTML = `진행: <b>${plies}/${g.plyCap}</b>수`;
+  } else if (g.type === "survive") {
+    $("st-moves").innerHTML = `버티기: <b>${e.blackMoveCount()}/${g.need}</b>수`;
+  } else if (g.type === "placeN") {
+    $("st-moves").innerHTML = `놓은 돌: <b>${e.blackMoveCount()}/${g.need}</b>개`;
+  } else {
+    $("st-moves").innerHTML = `사용한 수: <b>${e.blackMoveCount()}/${g.moveLimit}</b>`;
+  }
+}
+
+/* ── 착수 처리 파이프라인 ── */
+const ILLEGAL_MSG = {
+  occupied: () => TXT("이미 돌이 있는 자리예요.", "여긴 벌써 돌이 있어요! 다른 곳에 놓아요 😄"),
+  suicide:  () => TXT("자살수예요! 활로가 없는 곳에는 둘 수 없어요.", "여기 두면 내 돌이 숨을 못 쉬어요! 🙅"),
+  ko:       () => TXT("패(코)! 방금과 같은 모양으로 바로 되돌릴 수 없어요.", "방금 모양으로 바로 되돌리기는 안 돼요! 한 번 다른 곳에 두고 와요."),
+  range:    () => TXT("판 밖이에요.", "판 안에 놓아 주세요!"),
+};
+
+async function playerMove(x, y) {
+  const e = App.engine, L = App.level;
+  if (e.turn !== BLACK) return;
+  const res = e.play(x, y, BLACK);
+  if (!res.ok) {
+    App.illegalCount++;
+    toast(ILLEGAL_MSG[res.reason]());
+    return;
+  }
+  App.blackPassStreak = 0;
+  App.busy = true;
+  renderBoard(); updateStatus();
+
+  // 목표 즉시 달성 확인 (백 응수 전)
+  if (checkCleared()) { App.busy = false; return; }
+
+  // 코칭: 강도 5 = 매 수 / 강도 4 = 실수 감지 시
+  const selfAtari = groupAt(e.board, e.n, x, y).libs.size === 1;
+  if (L.intensity === 5) coachComment("auto", { moveName: e.coordName(x, y) });
+  else if (L.intensity === 4 && selfAtari) {
+    coachComment("mistake", { moveName: e.coordName(x, y), what: "방금 놓은 돌의 활로가 1개뿐이에요(단수 상태)" });
+  }
+
+  // 백 AI 응수
+  await whiteReply();
+  App.busy = false;
+}
+
+async function whiteReply() {
+  const e = App.engine, L = App.level;
+  if (App.finished) return;
+  if (L.whiteAI !== "none" && e.turn === WHITE) {
+    await new Promise((r) => setTimeout(r, 380));
+    const mv = aiPickMove(e, L);
+    if (mv) {
+      const r2 = e.play(mv.x, mv.y, WHITE);
+      if (!r2.ok) e.pass(WHITE);
+      else if (r2.captured > 0 && L.intensity === 4) {
+        coachComment("mistake", { what: `방금 백에게 흑돌 ${r2.captured}개를 잡혔어요` });
+      }
+    } else e.pass(WHITE);
+    renderBoard();
+  } else if (L.goal.type === "score" && L.whiteAI === "none") {
+    e.pass(WHITE);
+  } else if (e.turn === WHITE) {
+    // 상대 없음 퍼즐: 백은 항상 패스 (기록은 남겨 코 규칙 유지)
+    e.pass(WHITE);
+  }
+  updateStatus();
+  checkCleared() || checkFailed();
+}
+
+/* ── 목표 판정 ── */
+function checkCleared() {
+  const e = App.engine, L = App.level, g = L.goal;
+  if (App.finished) return false;
+  let cleared = false;
+  switch (g.type) {
+    case "placeN": cleared = e.blackMoveCount() >= g.need; break;
+    case "captureMarked": cleared = e.get(g.origin[0], g.origin[1]) !== WHITE; break;
+    case "connect": {
+      const [ax, ay] = g.a, [bx, by] = g.b;
+      if (e.get(ax, ay) === BLACK && e.get(bx, by) === BLACK) {
+        const grp = groupAt(e.board, e.n, ax, ay);
+        cleared = grp.cells.some(([cx, cy]) => cx === bx && cy === by);
+      }
+      break;
+    }
+    case "survive": cleared = e.blackMoveCount() >= g.need && markedAlive(); break;
+    case "score": {
+      const over = e.history.length >= g.plyCap || e.passes >= 2;
+      if (over) { finishScoreGame(); return true; }
+      return false;
+    }
+  }
+  if (cleared) { finishLevel(true); return true; }
+  return false;
+}
+
+function markedAlive() {
+  const e = App.engine, L = App.level;
+  return L.marked.every(([mx, my]) => e.get(mx, my) === BLACK);
+}
+
+function checkFailed() {
+  const e = App.engine, L = App.level, g = L.goal;
+  if (App.finished) return false;
+  let failed = false, why = "";
+  if (g.type === "survive" && !markedAlive()) { failed = true; why = TXT("지켜야 할 돌이 잡혔어요.", "지켜야 할 돌을 뺏겼어요 😢"); }
+  if (g.type === "connect") {
+    const [ax, ay] = g.a, [bx, by] = g.b;
+    if (e.get(ax, ay) !== BLACK || e.get(bx, by) !== BLACK) { failed = true; why = TXT("이어야 할 돌이 잡혔어요.", "이어 줄 돌이 잡혀 버렸어요 😢"); }
+  }
+  if (!failed && g.moveLimit && e.blackMoveCount() >= g.moveLimit) {
+    failed = true; why = TXT("제한 수를 다 썼어요.", "둘 수 있는 횟수를 다 썼어요!");
+  }
+  if (failed) { finishLevel(false, why); return true; }
+  return false;
+}
+
+function finishScoreGame() {
+  const e = App.engine, L = App.level;
+  const s = e.score();
+  const margin = s.black - s.white;
+  const ok = margin >= L.goal.margin;
+  App.scoreResult = { s, margin };
+  finishLevel(ok, ok ? "" : TXT(
+    `집 계산: 흑 ${s.black} — 백 ${s.white}. ${L.goal.margin}집 이상 앞서야 해요.`,
+    `내 집 ${s.black}개, 상대 집 ${s.white}개였어요. 조금만 더 힘내면 이길 수 있어요!`));
+}
+
+/* ── 별점 계산 ── */
+function computeStars() {
+  const e = App.engine, L = App.level, g = L.goal;
+  switch (g.type) {
+    case "placeN":
+      return App.illegalCount === 0 ? 3 : App.illegalCount <= 2 ? 2 : 1;
+    case "captureMarked":
+    case "connect": {
+      const r = e.blackMoveCount() / g.moveLimit;
+      return r <= 0.55 ? 3 : r <= 0.85 ? 2 : 1;
+    }
+    case "survive": {
+      const lost = e.captures[WHITE];
+      return lost === 0 ? 3 : lost <= 2 ? 2 : 1;
+    }
+    case "score": {
+      const m = App.scoreResult ? App.scoreResult.margin : 0;
+      return m >= g.margin + 8 ? 3 : m >= g.margin + 3 ? 2 : 1;
+    }
+  }
+  return 1;
+}
+
+/* ── 레벨 종료 → 결과 화면 ── */
+function finishLevel(cleared, whyFail) {
+  if (App.finished) return;
+  App.finished = true;
+  const L = App.level;
+  const stars = cleared ? computeStars() : 0;
+  if (cleared) Progress.setStars(L.level, stars);
+
+  $("result-title").textContent = cleared
+    ? TXT("🎉 클리어!", "🎉 참 잘했어요!")
+    : TXT("아깝다, 다시 해볼까요?", "아까워요! 한 번 더 해 봐요 💪");
+  $("result-stars").textContent = cleared ? "★".repeat(stars) + "☆".repeat(3 - stars) : "☆☆☆";
+
+  let msg;
+  if (cleared) {
+    const praise = {
+      3: TXT("완벽해요! 최고 성과로 클리어했어요.", "우와, 별 3개! 정말 대단해요 🌟🌟🌟"),
+      2: TXT("잘했어요! 조금만 더 다듬으면 별 3개도 가능해요.", "잘했어요! 다음엔 별 3개에 도전해 봐요 ⭐"),
+      1: TXT("클리어 성공! 다시 도전하면 별을 더 받을 수 있어요.", "성공! 또 하면 별을 더 모을 수 있어요 ⭐"),
+    }[stars];
+    msg = praise;
+    if (App.scoreResult) msg += ` (집 계산: 흑 ${App.scoreResult.s.black} — 백 ${App.scoreResult.s.white})`;
+  } else {
+    msg = (whyFail || "") + " " + TXT("천천히 다시 생각해 보면 분명 방법이 보일 거예요!",
+                                       "괜찮아요, 다시 하면 꼭 성공할 수 있어요! 😊");
+  }
+  $("result-msg").textContent = msg;
+  $("result-coach").innerHTML = "";
+  App.scoreResult = null;
+
+  const hasNext = cleared && L.level < 100;
+  $("btn-next").style.display = hasNext ? "" : "none";
+
+  // 강도 2: 끝난 후 총평 1회 / 강도 5~3도 마무리 코멘트는 총평으로 겸함
+  if (L.intensity === 2 || (L.intensity >= 3 && cleared)) {
+    coachComment("summary", { cleared, stars, target: "result" });
+  }
+  showScreen("screen-result");
+}
+
+/* ── 컨트롤 버튼 ── */
+$("btn-undo").addEventListener("click", () => {
+  const e = App.engine;
+  if (App.busy || App.finished || !e || !e.history.length) return;
+  // 마지막 백 응수까지 함께 되돌려 항상 흑 차례로
+  e.undo();
+  while (e.history.length && e.turn !== BLACK) e.undo();
+  renderBoard(); updateStatus();
+});
+$("btn-pass").addEventListener("click", async () => {
+  if (App.busy || App.finished) return;
+  const e = App.engine;
+  if (e.turn !== BLACK) return;
+  e.pass(BLACK);
+  App.blackPassStreak++;
+  updateStatus();
+  if (e.passes >= 2 || App.blackPassStreak >= 2) { finishScoreGame(); return; }
+  App.busy = true;
+  await whiteReply();
+  App.busy = false;
+});
+$("btn-restart").addEventListener("click", () => { if (App.level) startLevel(App.level.level); });
+$("btn-quit").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
+$("btn-hint").addEventListener("click", () => coachComment("hint", {}));
+
+$("btn-retry").addEventListener("click", () => startLevel(App.level.level));
+$("btn-to-levels").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
+$("btn-next").addEventListener("click", () => startLevel(App.level.level + 1));
+
+/* ═══════════════════════════════════════════════════════════════════════
+   § F. AI 코치 (강도별 트리거 → 프롬프트 구성 → Gemini 호출)
+   프롬프트에는 보드 상태·마지막 수·학습 개념·나이대만 담고,
+   개인 식별 정보는 전송하지 않음
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function addBubble(text, cls, target) {
+  const box = target === "result" ? $("result-coach") : $("coach-messages");
+  const div = document.createElement("div");
+  div.className = "bubble" + (cls ? " " + cls : "");
+  div.textContent = text;
+  box.appendChild(div);
+  while (box.children.length > 6) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+
+const COACH_KIND_INSTRUCTION = {
+  auto:    "학습자가 방금 돌을 놓았습니다. 이 수가 좋은 점 또는 더 좋은 방법을 짧게 알려 주세요.",
+  mistake: "학습자가 방금 실수로 보이는 수를 두었습니다. 왜 위험한지 부드럽게 알려 주세요.",
+  hint:    "학습자가 힌트를 요청했습니다. 정답 좌표를 직접 말하지 말고, 어디를 살펴봐야 할지 방향만 알려 주세요.",
+  summary: "문제가 끝났습니다. 이번 판 전체에 대한 짧은 총평과 격려를 해 주세요.",
+};
+
+async function coachComment(kind, extra) {
+  const L = App.level, e = App.engine;
+  if (!L || L.intensity === 1) return;          // 강도 1: 코멘트 없음
+  if (!App.apiKey) return;                       // 키 없으면 조용히 생략
+  if (App.coachBusy) return;
+  if (kind === "auto") {                         // 매 수 코멘트는 과호출 방지
+    const now = Date.now();
+    if (now - App.lastAutoCoach < 4000) return;
+    App.lastAutoCoach = now;
+  }
+  App.coachBusy = true;
+  const target = extra && extra.target;
+  const loading = addBubble(TXT("코치가 생각 중이에요...", "선생님이 생각하고 있어요... 🤔"), "loading", target);
+
+  const age = AGE_GROUPS[App.ageIdx];
+  const systemText =
+    `당신은 친절한 바둑 코치입니다. ${age.promptDesc} 말해 주세요. ` +
+    `2~3문장 이내로 짧게 코멘트하세요. 정답을 직접 알려주지 말고 ` +
+    `스스로 생각하도록 유도하는 질문을 섞으세요. 따뜻하게 격려하는 말투를 유지하세요.`;
+
+  const last = e.lastMove();
+  const userText = [
+    `[학습 개념] ${L.tierName} — ${L.conceptText.std}`,
+    `[이번 문제 목표] ${L.goalText}`,
+    `[상황] ${COACH_KIND_INSTRUCTION[kind]}`,
+    extra && extra.what ? `[참고] ${extra.what}` : "",
+    extra && typeof extra.cleared === "boolean"
+      ? `[결과] ${extra.cleared ? "클리어 성공, 별 " + extra.stars + "개" : "이번에는 실패"}` : "",
+    `[마지막 수] ${last ? (last.color === BLACK ? "흑(학습자) " : "백(상대) ") + e.coordName(last.x, last.y) : "아직 없음"}`,
+    `[현재 보드] (X=흑=학습자, O=백=상대, .=빈 점)`,
+    e.serialize(),
+  ].filter(Boolean).join("\n");
+
+  try {
+    const text = await callGemini(App.apiKey, systemText, userText);
+    loading.remove();
+    addBubble(text, "", target);
+  } catch (err) {
+    loading.remove();
+    let friendly;
+    if (err.status === 400 || err.status === 403)
+      friendly = TXT("API 키가 올바르지 않은 것 같아요. 설정에서 키를 확인해 주세요. (게임은 계속할 수 있어요!)",
+                     "코치 열쇠(API 키)가 안 맞나 봐요. 그래도 게임은 계속할 수 있어요!");
+    else if (err.status === 429)
+      friendly = TXT("코치가 잠시 바빠요. 조금 있다가 다시 시도해 주세요.", "선생님이 지금 너무 바빠요! 조금만 기다려 줘요 ⏳");
+    else
+      friendly = TXT("코치와 연결이 잠시 끊겼어요. 네트워크를 확인해 주세요. (게임은 계속 진행돼요!)",
+                     "선생님이랑 연결이 잠깐 끊겼어요. 게임은 계속할 수 있어요!");
+    addBubble(friendly, "err", target);
+  } finally {
+    App.coachBusy = false;
+  }
+}
+
+/* ── 앱 시작 ── */
+initStartScreen();
+</script>
+</body>
+</html>
