@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>마스터 학습 게임 모음</title>
+<style>
+  :root {
+    --wood: #dcb35c;
+    --ink: #2d2418;
+    --accent: #2e7d32;
+    --shadow: 0 2px 8px rgba(0,0,0,.12);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    background: linear-gradient(160deg, #f5efe0, #e8dcc0);
+    color: var(--ink);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .wrap { max-width: 720px; width: 100%; text-align: center; }
+  h1 { font-size: 2em; margin-bottom: .3em; }
+  .subtitle { color: #6b5d45; margin-bottom: 2em; line-height: 1.6; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px;
+  }
+  .card {
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px 20px;
+    box-shadow: var(--shadow);
+    text-decoration: none;
+    color: var(--ink);
+    display: block;
+    transition: transform .12s, box-shadow .12s;
+  }
+  .card:not(.disabled):hover { transform: translateY(-4px); box-shadow: 0 6px 16px rgba(0,0,0,.18); }
+  .card .emoji { font-size: 2.6em; margin-bottom: 10px; }
+  .card .name { font-size: 1.25em; font-weight: 800; margin-bottom: 6px; }
+  .card .desc { font-size: .9em; color: #7a6c52; line-height: 1.5; }
+  .card.disabled { opacity: .5; cursor: not-allowed; }
+  .card .badge {
+    display: inline-block; margin-top: 10px; font-size: .78em;
+    background: #eef4ff; color: #1565c0; border-radius: 999px; padding: 3px 12px;
+  }
+  .card.disabled .badge { background: #eee; color: #888; }
+  .card.available .badge { background: #e3efe4; color: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🎓 마스터 학습 게임 모음</h1>
+    <p class="subtitle">
+      전혀 몰라도 1단계부터 100단계까지, AI 코치와 함께 차근차근 배우는<br>
+      두뇌 게임 학습 앱 시리즈입니다.
+    </p>
+    <div class="grid">
+      <a class="card available" href="baduk-master.html">
+        <div class="emoji">🏯</div>
+        <div class="name">바둑 마스터</div>
+        <div class="desc">활로, 축출, 사활, 집 계산까지<br>100단계로 배우는 바둑</div>
+        <span class="badge">지금 플레이 ▶</span>
+      </a>
+      <div class="card disabled">
+        <div class="emoji">🐎</div>
+        <div class="name">장기 마스터</div>
+        <div class="desc">차·포·마·상부터 외통수까지<br>100단계로 배우는 장기</div>
+        <span class="badge">준비 중</span>
+      </div>
+      <div class="card disabled">
+        <div class="emoji">♟️</div>
+        <div class="name">체스 마스터</div>
+        <div class="desc">기물 움직임부터 체크메이트까지<br>100단계로 배우는 체스</div>
+        <span class="badge">준비 중</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
