@@ -28,7 +28,7 @@
   body.age-3 { --fs: 16px; --btn-h: 44px; }
   body.age-4 { --fs: 16px; --btn-h: 44px; }
 
-  .screen { display: none; max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+  .screen { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
   .screen.active { display: block; }
   h1 { font-size: 1.9em; margin-bottom: .3em; }
   h2 { font-size: 1.35em; margin: .6em 0 .4em; }
@@ -79,10 +79,10 @@
   .top-bar .spacer { flex: 1; }
 
   .play-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
-  .board-col { flex: 1 1 340px; min-width: 300px; position: relative; }
-  .side-col { flex: 1 1 280px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
+  .board-col { flex: 2 1 480px; min-width: 320px; position: relative; }
+  .side-col { flex: 1 1 300px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
   #board-canvas {
-    width: 100%; max-width: 460px; display: block; margin: 0 auto;
+    width: 100%; max-width: 640px; display: block; margin: 0 auto;
     border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.25); touch-action: manipulation;
   }
   .goal-box { background: #fff8e6; border: 2px solid #e8c97a; border-radius: 12px; padding: 12px 14px; line-height: 1.5; }
@@ -1004,10 +1004,11 @@ function enterLevel(level) {
     addBubble(TXT("(API 키가 없어 AI 코멘트는 쉬어요. 게임은 그대로 즐길 수 있어요!)",
                   "(지금은 코치 선생님이 잠깐 자리를 비웠어요. 그래도 게임은 할 수 있어요!)"), "sys");
   }
+  // 화면이 보이는 상태에서 크기를 재야 컨테이너 너비가 0으로 읽히지 않는다
+  showScreen("screen-play");
   resizeBoard();
   renderBoard();
   updateStatus();
-  showScreen("screen-play");
 }
 
 /* ── 보드 렌더링 ── */
@@ -1016,7 +1017,7 @@ const ctx = canvas.getContext("2d");
 
 function resizeBoard() {
   const holder = canvas.parentElement;
-  const cssW = Math.min(holder.clientWidth || 320, 460);
+  const cssW = Math.min(holder.clientWidth || 320, 640);
   const dpr = window.devicePixelRatio || 1;
   canvas.style.width = cssW + "px";
   canvas.style.height = cssW + "px";

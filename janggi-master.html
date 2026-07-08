@@ -28,7 +28,7 @@
   body.age-3 { --fs: 16px; --btn-h: 44px; }
   body.age-4 { --fs: 16px; --btn-h: 44px; }
 
-  .screen { display: none; max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+  .screen { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
   .screen.active { display: block; }
   h1 { font-size: 1.9em; margin-bottom: .3em; }
   h2 { font-size: 1.35em; margin: .6em 0 .4em; }
@@ -79,10 +79,10 @@
   .top-bar .spacer { flex: 1; }
 
   .play-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
-  .board-col { flex: 1 1 340px; min-width: 300px; }
-  .side-col { flex: 1 1 280px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
+  .board-col { flex: 2 1 480px; min-width: 320px; }
+  .side-col { flex: 1 1 300px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
   #board-canvas {
-    width: 100%; max-width: 460px; display: block; margin: 0 auto;
+    width: 100%; max-width: 580px; display: block; margin: 0 auto;
     border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.25); touch-action: manipulation;
   }
   .goal-box { background: #fff8e6; border: 2px solid #e8c97a; border-radius: 12px; padding: 12px 14px; line-height: 1.5; }
@@ -447,9 +447,9 @@ function elephantMoves(board, x, y, side) {
 function soldierMoves(board, x, y, side) {
   const res = [];
   const fwdDy = side === CHO ? -1 : 1;
-  const crossed = side === CHO ? y <= 4 : y >= 5;
-  const cands = [[x, y + fwdDy]];
-  if (crossed) cands.push([x - 1, y], [x + 1, y]);
+  // 졸/병은 처음부터 앞으로 또는 좌우로 움직일 수 있다(뒤로는 못 감). 강을
+  // 건너야 좌우로 갈 수 있는 것은 중국장기(샹치) 규칙이며 장기에는 해당하지 않는다.
+  const cands = [[x, y + fwdDy], [x - 1, y], [x + 1, y]];
   for (const [nx, ny] of cands) {
     if (!inBounds(nx, ny)) continue;
     const c = board[key(nx, ny)];
@@ -611,8 +611,8 @@ const TIER_TEXT = {
        kid: "포는 폴짝! 다른 말 하나를 꼭 뛰어넘어야만 움직일 수 있어요 🦘 포는 포를 못 넘어요!" },
   4: { std: "마(馬)는 한 칸 직선으로 간 뒤 대각선으로 한 칸 더 움직입니다. 상(象)은 그보다 한 칸 더 멀리 대각선으로 갑니다. 둘 다 가는 길(다리)이 막히면 움직일 수 없어요.",
        kid: "마는 한 걸음 곧게, 그다음 대각선으로 한 걸음! 상은 대각선으로 한 걸음 더 멀리 가요 🐴 가는 길이 막히면 못 가요!" },
-  5: { std: "사(士)는 궁성 안에서만 궁처럼 움직일 수 있어요. 졸/병은 앞으로 한 칸씩 가고, 강을 건너면 좌우로도 움직일 수 있게 됩니다.",
-       kid: "사는 궁성 안에서만 움직여요. 졸(병)은 앞으로 콩콩 가다가, 강을 건너면 옆으로도 갈 수 있어요 🐸" },
+  5: { std: "사(士)는 궁성 안에서만 궁처럼 움직일 수 있어요. 졸/병은 앞으로 한 칸, 또는 좌우로 한 칸 움직일 수 있어요. 단, 뒤로는 갈 수 없습니다.",
+       kid: "사는 궁성 안에서만 움직여요. 졸(병)은 앞으로 콩콩, 옆으로도 콩콩 갈 수 있어요! 그런데 뒤로는 못 가요 🐸" },
   6: { std: "상대 궁을 위협하는 것을 '장군'이라 하고, 그 위협을 막아내는 것을 '멍군'이라 합니다. 내 궁이 장군에 걸리면 반드시 위협을 없애는 수를 두어야 해요.",
        kid: "상대 임금님을 위협하면 '장군!' 이에요 📢 내가 장군에 걸리면 얼른 위험을 없애야 해요!" },
   7: { std: "장군을 걸었을 때 상대가 어떤 수를 두어도 위협을 없앨 수 없으면 '외통수'로 승리합니다. 상대 궁이 도망갈 곳을 미리 막아두는 것이 핵심이에요.",
@@ -718,17 +718,17 @@ function makeLevel(lv) {
       } else {
         put(4, 8, CHO, T.KING);
         const sx = randInt(rng, 0, 8);
-        const startY = d >= 6 ? 5 : 8; // 고난도: 이미 강 건넌 상태에서 좌우 이동 학습
+        const startY = randInt(rng, 5, 8);
         put(sx, startY, CHO, T.SOLDIER);
-        const wantSide = d >= 6 && rng() < 0.7;
+        const wantSide = d >= 5 && rng() < 0.6;
         let tx = wantSide ? Math.max(0, Math.min(8, sx + (rng() < 0.5 ? -1 : 1))) : sx;
-        let ty = Math.max(0, wantSide ? startY : startY - (2 + Math.floor(d / 4)));
+        let ty = wantSide ? startY : Math.max(0, startY - (2 + Math.floor(d / 4)));
         if (tx === 4 && ty === 1) tx = tx === 0 ? 1 : tx - 1; // 한(HAN) 궁(4,1)과 겹치지 않도록 보정
         const tgt = put(tx, ty, HAN, T.SOLDIER);
         L.marked.push(tgt);
         L.goal = { type: "capture", target: tgt, moveLimit: 3 + Math.floor(d / 2) };
         L.goalText = wantSide
-          ? "▲ 표시된 상대 병을 잡으세요. 강을 건넜다면 좌우로도 움직일 수 있어요!"
+          ? "▲ 표시된 상대 병을 옆으로 움직여 잡으세요!"
           : "▲ 표시된 상대 병을 앞으로 나아가 잡으세요.";
       }
       break;
@@ -1008,10 +1008,11 @@ function enterLevel(level) {
     addBubble(TXT("(API 키가 없어 AI 코멘트는 쉬어요. 게임은 그대로 즐길 수 있어요!)",
                   "(지금은 코치 선생님이 잠깐 자리를 비웠어요. 그래도 게임은 할 수 있어요!)"), "sys");
   }
+  // 화면이 보이는 상태에서 크기를 재야 컨테이너 너비가 0으로 읽히지 않는다
+  showScreen("screen-play");
   resizeBoard();
   renderBoard();
   updateStatus();
-  showScreen("screen-play");
 }
 
 /* ── 보드 렌더링 ── */
@@ -1020,7 +1021,7 @@ const ctx = canvas.getContext("2d");
 
 function resizeBoard() {
   const holder = canvas.parentElement;
-  const cssW = Math.min(holder.clientWidth || 320, 460);
+  const cssW = Math.min(holder.clientWidth || 320, 580);
   const cell = cssW / (BOARD_W + 1);
   const cssH = cell * (BOARD_H + 1);
   const dpr = window.devicePixelRatio || 1;

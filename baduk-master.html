@@ -54,7 +54,7 @@
   body.age-3 { --fs: 16px; --btn-h: 44px; }
   body.age-4 { --fs: 16px; --btn-h: 44px; }
 
-  .screen { display: none; max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+  .screen { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
   .screen.active { display: block; }
 
   h1 { font-size: 1.9em; margin-bottom: .3em; }
@@ -115,10 +115,10 @@
 
   /* ── 학습/대국 화면 ── */
   .play-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
-  .board-col { flex: 1 1 340px; min-width: 300px; }
-  .side-col { flex: 1 1 280px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
+  .board-col { flex: 2 1 480px; min-width: 320px; }
+  .side-col { flex: 1 1 300px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
   #board-canvas {
-    width: 100%; max-width: 560px; display: block; margin: 0 auto;
+    width: 100%; max-width: 720px; display: block; margin: 0 auto;
     border-radius: 10px; box-shadow: 0 4px 14px rgba(0,0,0,.25);
     touch-action: manipulation;
   }
@@ -1085,10 +1085,12 @@ function enterLevel(level) {
                   "(지금은 코치 선생님이 잠깐 자리를 비웠어요. 그래도 게임은 할 수 있어요!)"), "sys");
   }
 
+  // 화면이 보이는 상태에서 크기를 재야 컨테이너 너비가 0으로 읽히지 않는다
+  // (display:none 상태에서 재면 실제 렌더링 크기와 어긋나 클릭 좌표가 틀어짐)
+  showScreen("screen-play");
   resizeBoard();
   renderBoard();
   updateStatus();
-  showScreen("screen-play");
 }
 
 /* ── 보드 렌더링 (canvas) ── */
@@ -1097,8 +1099,11 @@ const ctx = canvas.getContext("2d");
 
 function resizeBoard() {
   const holder = canvas.parentElement;
-  const cssSize = Math.min(holder.clientWidth || 360, 560);
+  const cssSize = Math.min(holder.clientWidth || 360, 720);
   const dpr = window.devicePixelRatio || 1;
+  // 너비/높이를 둘 다 명시적으로 고정해야 실제 렌더링 박스가 항상 정사각형이 되어
+  // 클릭 좌표 계산(항상 가로 비율만 사용)이 세로 방향에서도 정확히 맞는다.
+  canvas.style.width = cssSize + "px";
   canvas.style.height = cssSize + "px";
   canvas.width = cssSize * dpr;
   canvas.height = cssSize * dpr;
