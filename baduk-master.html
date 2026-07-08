@@ -215,6 +215,25 @@
     <span class="spacer"></span>
     <button class="secondary" id="btn-settings">⚙ 설정</button>
   </div>
+
+  <div class="panel">
+    <b>🎮 지금 바로 대국하고 싶나요?</b>
+    <p class="hint-text">단계와 상관없이 자유롭게 실전 대국을 해볼 수 있어요. 별점과 진행 기록에는 반영되지 않아요.</p>
+    <div class="controls" style="margin-top:10px; align-items:center">
+      <select id="freeplay-size" style="max-width:160px">
+        <option value="9">9줄 (빠른 대국)</option>
+        <option value="13">13줄</option>
+        <option value="19" selected>19줄 (정식)</option>
+      </select>
+      <button class="blue" id="btn-freeplay">🎮 실전 연습 시작</button>
+    </div>
+    <div class="controls" style="margin-top:10px; align-items:center">
+      <label for="jump-level" style="font-weight:700; align-self:center">원하는 단계로 바로 이동:</label>
+      <input type="number" id="jump-level" min="1" max="100" value="1" style="max-width:90px">
+      <button class="secondary" id="btn-jump-level" style="flex:0 0 auto">이동</button>
+    </div>
+  </div>
+
   <div id="tier-list"></div>
 </div>
 
@@ -957,6 +976,12 @@ function initStartScreen() {
     showScreen("screen-levels");
   });
   $("btn-settings").addEventListener("click", () => showScreen("screen-start"));
+  $("btn-freeplay").addEventListener("click", () => startFreePlay(parseInt($("freeplay-size").value, 10)));
+  $("btn-jump-level").addEventListener("click", () => {
+    const n = parseInt($("jump-level").value, 10);
+    if (!n || n < 1 || n > 100) { toast(TXT("1~100 사이의 단계 번호를 입력하세요.", "1부터 100 사이 숫자를 넣어주세요!")); return; }
+    startLevel(n);
+  });
 }
 function applyAge(idx) {
   App.ageIdx = idx;
@@ -1004,7 +1029,30 @@ function renderLevelSelect() {
 
 /* ── 학습/대국 화면 ── */
 function startLevel(lv) {
-  const level = makeLevel(lv);
+  enterLevel(makeLevel(lv));
+}
+
+/* 잠금과 무관하게 바로 즐기는 자유 대국(실전 연습). 별점/진행기록에는 반영되지 않음 */
+function makeFreeplayLevel(boardSize) {
+  const n = boardSize || 19;
+  return {
+    level: "free", tier: 0, tierName: "실전 연습", difficulty: 0, intensity: 3,
+    conceptText: {
+      std: `지금까지 배운 것을 활용해 ${n}줄 바둑판에서 자유롭게 실전 대국을 해보세요. 목표 집수는 없고, 두 번 연속 패스하면 대국이 끝나고 집을 계산해요.`,
+      kid: `배운 걸 다 써서 자유롭게 대국해봐요! 둘 다 연속으로 쉬면(패스) 끝나고 집을 세어요 😊`,
+    },
+    boardSize: n, stones: [], marked: [], whiteAI: "greedy",
+    goal: { type: "score", margin: 1, plyCap: 200 },
+    goalText: "자유 대국이에요. 정해진 목표 없이 마음껏 두고, 두 번 연속 패스하면 집을 계산해요.",
+  };
+}
+function startFreePlay(boardSize) {
+  App.freeplaySize = boardSize || 19;
+  enterLevel(makeFreeplayLevel(App.freeplaySize));
+}
+
+function enterLevel(level) {
+  const lv = level.level;
   App.level = level;
   App.engine = new GoEngine(level.boardSize);
   for (const s of level.stones) App.engine.setStone(s.x, s.y, s.c);
@@ -1015,7 +1063,7 @@ function startLevel(lv) {
   App.lastAutoCoach = 0;
   App.blackPassStreak = 0; // 학습자가 연속 2번 패스하면 바로 계가
 
-  $("play-title").textContent = `${lv}단계 · ${level.tierName}`;
+  $("play-title").textContent = lv === "free" ? "🎮 실전 연습" : `${lv}단계 · ${level.tierName}`;
   $("play-coach-level").textContent = `AI 도움: ${COACH_LABELS[level.intensity]}`;
   $("goal-text").textContent = level.goalText;
   $("concept-text").textContent = kidMode() ? level.conceptText.kid : level.conceptText.std;
@@ -1315,7 +1363,7 @@ function finishLevel(cleared, whyFail) {
   App.finished = true;
   const L = App.level;
   const stars = cleared ? computeStars() : 0;
-  if (cleared) Progress.setStars(L.level, stars);
+  if (cleared && typeof L.level === "number") Progress.setStars(L.level, stars);
 
   $("result-title").textContent = cleared
     ? TXT("🎉 클리어!", "🎉 참 잘했어요!")
@@ -1370,11 +1418,15 @@ $("btn-pass").addEventListener("click", async () => {
   await whiteReply();
   App.busy = false;
 });
-$("btn-restart").addEventListener("click", () => { if (App.level) startLevel(App.level.level); });
+function replayCurrentLevel() {
+  if (!App.level) return;
+  if (App.level.level === "free") startFreePlay(App.freeplaySize); else startLevel(App.level.level);
+}
+$("btn-restart").addEventListener("click", replayCurrentLevel);
 $("btn-quit").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
 $("btn-hint").addEventListener("click", () => coachComment("hint", {}));
 
-$("btn-retry").addEventListener("click", () => startLevel(App.level.level));
+$("btn-retry").addEventListener("click", replayCurrentLevel);
 $("btn-to-levels").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
 $("btn-next").addEventListener("click", () => startLevel(App.level.level + 1));
 

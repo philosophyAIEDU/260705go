@@ -160,6 +160,20 @@
     <span class="spacer"></span>
     <button class="secondary" id="btn-settings">⚙ 설정</button>
   </div>
+
+  <div class="panel">
+    <b>🎮 지금 바로 대국하고 싶나요?</b>
+    <p class="hint-text">단계와 상관없이 정식 장기판에서 자유롭게 실전 대국을 해볼 수 있어요. 별점과 진행 기록에는 반영되지 않아요.</p>
+    <div class="controls" style="margin-top:10px">
+      <button class="blue" id="btn-freeplay">🎮 실전 연습 시작</button>
+    </div>
+    <div class="controls" style="margin-top:10px; align-items:center">
+      <label for="jump-level" style="font-weight:700; align-self:center">원하는 단계로 바로 이동:</label>
+      <input type="number" id="jump-level" min="1" max="100" value="1" style="max-width:90px">
+      <button class="secondary" id="btn-jump-level" style="flex:0 0 auto">이동</button>
+    </div>
+  </div>
+
   <div id="tier-list"></div>
 </div>
 
@@ -892,6 +906,12 @@ function initStartScreen() {
     showScreen("screen-levels");
   });
   $("btn-settings").addEventListener("click", () => showScreen("screen-start"));
+  $("btn-freeplay").addEventListener("click", () => startFreePlay());
+  $("btn-jump-level").addEventListener("click", () => {
+    const n = parseInt($("jump-level").value, 10);
+    if (!n || n < 1 || n > 100) { toast(TXT("1~100 사이의 단계 번호를 입력하세요.", "1부터 100 사이 숫자를 넣어주세요!")); return; }
+    startLevel(n);
+  });
 }
 function applyAge(idx) { App.ageIdx = idx; document.body.className = "age-" + idx; }
 
@@ -934,14 +954,41 @@ function renderLevelSelect() {
 
 /* ── 학습/대국 화면 ── */
 function startLevel(lv) {
-  const level = makeLevel(lv);
+  enterLevel(makeLevel(lv));
+}
+
+/* 잠금과 무관하게 바로 즐기는 자유 대국(실전 연습). 별점/진행기록에는 반영되지 않음 */
+function makeFreeplayLevel() {
+  const pieces = [];
+  const add = (x, y, side, type) => pieces.push({ x, y, side, type });
+  const backOrder = [T.ROOK, T.HORSE, T.ELEPHANT, T.GUARD, 0, T.GUARD, T.ELEPHANT, T.HORSE, T.ROOK];
+  for (let x = 0; x < 9; x++) if (backOrder[x]) { add(x, 9, CHO, backOrder[x]); add(x, 0, HAN, backOrder[x]); }
+  add(4, 8, CHO, T.KING); add(4, 1, HAN, T.KING);
+  add(1, 7, CHO, T.CANNON); add(7, 7, CHO, T.CANNON);
+  add(1, 2, HAN, T.CANNON); add(7, 2, HAN, T.CANNON);
+  for (let x = 0; x <= 8; x += 2) { add(x, 6, CHO, T.SOLDIER); add(x, 3, HAN, T.SOLDIER); }
+  return {
+    level: "free", tier: 0, tierName: "실전 연습", difficulty: 0, intensity: 3,
+    conceptText: {
+      std: "지금까지 배운 것을 활용해 정식 장기판에서 자유롭게 실전 대국을 해보세요.",
+      kid: "배운 걸 다 써서 자유롭게 대국해봐요! 원하는 만큼 두어도 괜찮아요 😊",
+    },
+    pieces, marked: [], hanAI: "greedy",
+    goal: { type: "material", margin: 1, plyCap: 200 },
+    goalText: "자유 대국이에요. 외통수로 이기거나 기물 점수를 앞서면 승리로 기록돼요.",
+  };
+}
+function startFreePlay() { enterLevel(makeFreeplayLevel()); }
+
+function enterLevel(level) {
+  const lv = level.level;
   App.level = level;
   App.engine = new JanggiEngine();
   for (const p of level.pieces) App.engine.set(p.x, p.y, p.side, p.type);
   App.busy = false; App.finished = false; App.selected = null; App.legalTargets = [];
   App.illegalCount = 0; App.lastAutoCoach = 0; App.scoreResult = null;
 
-  $("play-title").textContent = `${lv}단계 · ${level.tierName}`;
+  $("play-title").textContent = lv === "free" ? "🎮 실전 연습" : `${lv}단계 · ${level.tierName}`;
   $("play-coach-level").textContent = `AI 도움: ${COACH_LABELS[level.intensity]}`;
   $("goal-text").textContent = level.goalText;
   $("concept-text").textContent = kidMode() ? level.conceptText.kid : level.conceptText.std;
@@ -1221,7 +1268,7 @@ function finishLevel(cleared, whyFail) {
   App.finished = true;
   const L = App.level;
   const stars = cleared ? computeStars() : 0;
-  if (cleared) Progress.setStars(L.level, stars);
+  if (cleared && typeof L.level === "number") Progress.setStars(L.level, stars);
   $("result-title").textContent = cleared ? TXT("🎉 클리어!", "🎉 참 잘했어요!") : TXT("아깝다, 다시 해볼까요?", "아까워요! 한 번 더 해 봐요 💪");
   $("result-stars").textContent = cleared ? "★".repeat(stars) + "☆".repeat(3 - stars) : "☆☆☆";
   let msg;
@@ -1253,10 +1300,14 @@ $("btn-undo").addEventListener("click", () => {
   App.selected = null; App.legalTargets = [];
   renderBoard(); updateStatus();
 });
-$("btn-restart").addEventListener("click", () => { if (App.level) startLevel(App.level.level); });
+function replayCurrentLevel() {
+  if (!App.level) return;
+  if (App.level.level === "free") startFreePlay(); else startLevel(App.level.level);
+}
+$("btn-restart").addEventListener("click", replayCurrentLevel);
 $("btn-quit").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
 $("btn-hint").addEventListener("click", () => coachComment("hint", {}));
-$("btn-retry").addEventListener("click", () => startLevel(App.level.level));
+$("btn-retry").addEventListener("click", replayCurrentLevel);
 $("btn-to-levels").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
 $("btn-next").addEventListener("click", () => startLevel(App.level.level + 1));
 
