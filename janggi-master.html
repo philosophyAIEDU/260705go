@@ -115,6 +115,16 @@
   }
   #toast.show { opacity: 1; }
 
+  #call-banner {
+    position: absolute; top: 42%; left: 50%; transform: translate(-50%, -50%) scale(.7);
+    font-size: 2.4em; font-weight: 900; letter-spacing: 2px; opacity: 0; pointer-events: none;
+    transition: opacity .18s, transform .18s; z-index: 30; text-shadow: 0 2px 10px rgba(0,0,0,.35);
+    text-align: center; white-space: nowrap;
+  }
+  #call-banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  #call-banner.check { color: #c62828; }
+  #call-banner.defend { color: #1565c0; }
+
   .result-card { text-align: center; padding: 36px 20px; }
   .result-stars { font-size: 3em; color: #f2a900; letter-spacing: 6px; margin: 12px 0; }
   .result-title { font-size: 1.7em; font-weight: 800; }
@@ -182,14 +192,16 @@
     <button class="secondary" id="btn-quit">← 나가기</button>
     <h2 id="play-title" style="margin:0"></h2>
     <span class="spacer"></span>
+    <button class="secondary" id="btn-sound" style="min-height:36px; padding:4px 12px">🔊</button>
     <span id="play-coach-level" class="hint-text"></span>
   </div>
   <div class="play-wrap">
-    <div class="board-col">
+    <div class="board-col" style="position:relative">
       <div class="goal-box" style="margin-bottom:10px">
         <span class="goal-title">🎯 목표: </span><span id="goal-text"></span>
       </div>
       <canvas id="board-canvas"></canvas>
+      <div id="call-banner"></div>
       <div class="status-line" style="margin-top:10px">
         <span>차례: <b id="st-turn">나(초)</b></span>
         <span id="st-moves"></span>
@@ -302,6 +314,60 @@ async function callGemini(apiKey, systemText, userText) {
   if (!parts || !parts.length) throw new Error("응답이 비어 있어요");
   return parts.map((p) => p.text || "").join("").trim();
 }
+
+/* ═══ 효과음 (외부 음원 없이 Web Audio API로 즉석 생성, 바둑 마스터와 동일한
+   게임 독립 모듈) ═══ */
+const SoundFX = {
+  ctx: null, muted: false,
+  init() { this.muted = localStorage.getItem("janggiMaster.muted") === "1"; },
+  ensureCtx() {
+    if (this.muted) return null;
+    if (!this.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    }
+    if (this.ctx.state === "suspended") this.ctx.resume();
+    return this.ctx;
+  },
+  tone(freq, duration, type, gainStart, delay) {
+    const ctx = this.ensureCtx();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + (delay || 0);
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || "sine";
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(gainStart || 0.15, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.02);
+  },
+  place() { this.tone(700, 0.06, "triangle", 0.18); },
+  capture() { this.tone(480, 0.12, "sawtooth", 0.13); this.tone(320, 0.16, "sawtooth", 0.10, 0.05); },
+  illegal() { this.tone(140, 0.15, "square", 0.10); },
+  check() { // 장군: 급박하고 날카로운 두 음
+    this.tone(880, 0.1, "square", 0.15);
+    this.tone(880, 0.12, "square", 0.15, 0.14);
+  },
+  defend() { // 멍군: 안도하는 하강 음
+    this.tone(660, 0.1, "sine", 0.14);
+    this.tone(494, 0.16, "sine", 0.14, 0.1);
+  },
+  clear() {
+    this.tone(523.25, 0.14, "sine", 0.16);
+    this.tone(659.25, 0.14, "sine", 0.16, 0.12);
+    this.tone(783.99, 0.22, "sine", 0.18, 0.24);
+  },
+  fail() { this.tone(330, 0.18, "sine", 0.13); this.tone(247, 0.26, "sine", 0.13, 0.15); },
+  toggleMute() {
+    this.muted = !this.muted;
+    localStorage.setItem("janggiMaster.muted", this.muted ? "1" : "0");
+    return this.muted;
+  },
+};
+SoundFX.init();
 
 /* ═══ § B. 장기 규칙 엔진 (게임 종속 계층) ═══ */
 
@@ -888,6 +954,17 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
+/* 장군/멍군 콜아웃: 장기를 둘 때 전통적으로 외치는 구호를 화면에 띄운다 */
+let callBannerTimer = null;
+function announceCall(kind) {
+  const el = $("call-banner");
+  el.textContent = kind === "check" ? "장군이요!" : "멍군이요!";
+  el.className = kind === "check" ? "show check" : "show defend";
+  if (kind === "check") SoundFX.check(); else SoundFX.defend();
+  clearTimeout(callBannerTimer);
+  callBannerTimer = setTimeout(() => { el.classList.remove("show"); }, 1300);
+}
+
 function initStartScreen() {
   Progress.load();
   const savedAge = localStorage.getItem(STORE.age);
@@ -1171,9 +1248,13 @@ function updateStatus() {
 async function doPlayerMove(sx, sy, tx, ty) {
   const e = App.engine, L = App.level;
   const movedCode = e.board[key(sx, sy)];
+  const wasChoInCheck = e.inCheck(CHO);
   const res = e.play(sx, sy, tx, ty);
   App.selected = null; App.legalTargets = [];
-  if (!res.ok) { App.illegalCount++; toast(TXT("그곳으로는 움직일 수 없어요.", "거긴 못 가요!")); renderBoard(); return; }
+  if (!res.ok) { App.illegalCount++; toast(TXT("그곳으로는 움직일 수 없어요.", "거긴 못 가요!")); SoundFX.illegal(); renderBoard(); return; }
+  if (res.captured !== 0) SoundFX.capture(); else SoundFX.place();
+  if (e.inCheck(HAN)) announceCall("check");
+  else if (wasChoInCheck) announceCall("defend");
   App.busy = true;
   renderBoard(); updateStatus();
 
@@ -1191,11 +1272,15 @@ async function hanReply() {
   if (L.hanAI === "none") {
     e.turn = CHO; // 상대 AI가 없는 연습 문제: 상대는 실제로 움직이지 않고 차례만 넘김
   } else {
+    const wasHanInCheck = e.inCheck(HAN);
     await new Promise((r) => setTimeout(r, 380));
     const mv = aiPickMove(e, L);
     if (mv) {
       const capturedBefore = e.board[key(mv.to[0], mv.to[1])];
       e.play(mv.from[0], mv.from[1], mv.to[0], mv.to[1]);
+      if (capturedBefore !== 0) SoundFX.capture(); else SoundFX.place();
+      if (e.inCheck(CHO)) announceCall("check");
+      else if (wasHanInCheck) announceCall("defend");
       if (capturedBefore !== 0 && L.intensity === 4) {
         coachComment("mistake", { what: `방금 상대에게 ${PIECE_NAME[typeOf(capturedBefore)]}을(를) 잡혔어요` });
       }
@@ -1270,6 +1355,7 @@ function finishLevel(cleared, whyFail) {
   const L = App.level;
   const stars = cleared ? computeStars() : 0;
   if (cleared && typeof L.level === "number") Progress.setStars(L.level, stars);
+  if (cleared) SoundFX.clear(); else SoundFX.fail();
   $("result-title").textContent = cleared ? TXT("🎉 클리어!", "🎉 참 잘했어요!") : TXT("아깝다, 다시 해볼까요?", "아까워요! 한 번 더 해 봐요 💪");
   $("result-stars").textContent = cleared ? "★".repeat(stars) + "☆".repeat(3 - stars) : "☆☆☆";
   let msg;
@@ -1308,6 +1394,9 @@ function replayCurrentLevel() {
 $("btn-restart").addEventListener("click", replayCurrentLevel);
 $("btn-quit").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
 $("btn-hint").addEventListener("click", () => coachComment("hint", {}));
+function updateSoundButton() { $("btn-sound").textContent = SoundFX.muted ? "🔇" : "🔊"; }
+updateSoundButton();
+$("btn-sound").addEventListener("click", () => { SoundFX.toggleMute(); updateSoundButton(); if (!SoundFX.muted) SoundFX.place(); });
 $("btn-retry").addEventListener("click", replayCurrentLevel);
 $("btn-to-levels").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
 $("btn-next").addEventListener("click", () => startLevel(App.level.level + 1));
