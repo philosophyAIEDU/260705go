@@ -220,11 +220,28 @@
     <b>🎮 지금 바로 대국하고 싶나요?</b>
     <p class="hint-text">단계와 상관없이 자유롭게 실전 대국을 해볼 수 있어요. 별점과 진행 기록에는 반영되지 않아요.</p>
     <div class="controls" style="margin-top:10px; align-items:center">
-      <select id="freeplay-size" style="max-width:160px">
+      <select id="freeplay-size" style="max-width:150px">
         <option value="9">9줄 (빠른 대국)</option>
         <option value="13">13줄</option>
         <option value="19" selected>19줄 (정식)</option>
       </select>
+      <select id="freeplay-style" style="max-width:170px">
+        <option value="jp">🇯🇵 일본 기사 스타일</option>
+        <option value="cn">🇨🇳 중국 기사 스타일</option>
+      </select>
+      <select id="freeplay-rank" style="max-width:100px">
+        <option value="1">1단</option>
+        <option value="2">2단</option>
+        <option value="3">3단</option>
+        <option value="4">4단</option>
+        <option value="5">5단</option>
+        <option value="6">6단</option>
+        <option value="7">7단</option>
+        <option value="8">8단</option>
+        <option value="9" selected>9단</option>
+      </select>
+    </div>
+    <div class="controls" style="margin-top:10px">
       <button class="blue" id="btn-freeplay">🎮 실전 연습 시작</button>
     </div>
     <div class="controls" style="margin-top:10px; align-items:center">
@@ -817,6 +834,67 @@ function aiPickMove(engine, level) {
     return sim;
   };
 
+  /* ranked: 실전 연습에서 상대 단수(1~9단)에 맞춰 세기를 조절하는 AI.
+     후보 수를 휴리스틱으로 채점한 뒤, 단수가 높을수록 상위 점수 후보 중에서만
+     고르고 단수가 낮을수록 채점 순위와 무관하게 더 넓게 무작위로 고른다. */
+  if (style === "ranked") {
+    const skill = level.aiSkill != null ? level.aiSkill : 0.6;
+    let anyStone = false;
+    for (let i = 0; i < n * n; i++) if (board[i] !== EMPTY) { anyStone = true; break; }
+    const candSet = new Set();
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (board[y * n + x] !== EMPTY) continue;
+        if (anyStone) {
+          let near = false;
+          for (let dy = -2; dy <= 2 && !near; dy++)
+            for (let dx = -2; dx <= 2 && !near; dx++) {
+              const nx = x + dx, ny = y + dy;
+              if (nx >= 0 && ny >= 0 && nx < n && ny < n && board[ny * n + nx] !== EMPTY) near = true;
+            }
+          if (!near) continue;
+        } else if (x < 2 || y < 2 || x > n - 3 || y > n - 3) continue;
+        candSet.add(y * n + x);
+      }
+    }
+    const scored = [];
+    for (const idx of candSet) {
+      const x = idx % n, y = (idx / n) | 0;
+      if (avoid.has(idx)) continue;
+      const sim = simulateMove(board, n, x, y, WHITE);
+      if (!sim.legal) continue;
+      if (sim.captured === 0) {
+        let allOwn = true;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+          if (board[ny * n + nx] !== WHITE) { allOwn = false; break; }
+        }
+        if (allOwn) continue; // 자기 눈 메우기 금지
+      }
+      let score = sim.captured * 12;
+      score += sim.ownLibs <= 1 ? -9 : Math.min(sim.ownLibs, 4);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+        if (sim.board[ny * n + nx] === BLACK) {
+          const g = groupAt(sim.board, n, nx, ny);
+          if (g.libs.size === 1) score += 6;
+        }
+      }
+      const c = (n - 1) / 2;
+      score += Math.max(0, n - (Math.abs(x - c) + Math.abs(y - c))) * 0.05;
+      score += rng() * 2; // 동점 후보를 매번 다르게 섞기 위한 잡음
+      scored.push({ x, y, score });
+    }
+    if (scored.length) {
+      scored.sort((a, b) => b.score - a.score);
+      const spread = Math.max(1, Math.round((1 - skill) * scored.length));
+      return scored[Math.floor(rng() * spread)];
+    }
+    return null;
+  }
+
   /* ladder/defend: 표시된 그룹이 단수(활로 1)면 달아나기 시도 */
   if (style === "ladder" || style === "defend") {
     const g = findMarkedGroup(engine, level);
@@ -976,7 +1054,14 @@ function initStartScreen() {
     showScreen("screen-levels");
   });
   $("btn-settings").addEventListener("click", () => showScreen("screen-start"));
-  $("btn-freeplay").addEventListener("click", () => startFreePlay(parseInt($("freeplay-size").value, 10)));
+  $("btn-freeplay").addEventListener("click", () => {
+    App.freeplayName = null; // 새로 시작할 때는 상대 이름도 새로 뽑는다
+    startFreePlay(
+      parseInt($("freeplay-size").value, 10),
+      $("freeplay-style").value,
+      parseInt($("freeplay-rank").value, 10)
+    );
+  });
   $("btn-jump-level").addEventListener("click", () => {
     const n = parseInt($("jump-level").value, 10);
     if (!n || n < 1 || n > 100) { toast(TXT("1~100 사이의 단계 번호를 입력하세요.", "1부터 100 사이 숫자를 넣어주세요!")); return; }
@@ -1032,23 +1117,43 @@ function startLevel(lv) {
   enterLevel(makeLevel(lv));
 }
 
-/* 잠금과 무관하게 바로 즐기는 자유 대국(실전 연습). 별점/진행기록에는 반영되지 않음 */
-function makeFreeplayLevel(boardSize) {
+/* 자유 대국 상대 이름은 실제 프로 기사가 아닌 가상의 가명입니다 */
+const OPPONENT_NAME_POOL = {
+  jp: ["나카무라 이치로", "사카모토 하루", "요시다 렌"],
+  cn: ["리웨이", "장민", "천하오"],
+};
+function pickOpponentName(style) {
+  const pool = OPPONENT_NAME_POOL[style] || OPPONENT_NAME_POOL.jp;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/* 잠금과 무관하게 바로 즐기는 자유 대국(실전 연습). 별점/진행기록에는 반영되지 않음.
+   상대는 일본/중국 기사 스타일 중 골라 1~9단으로 세기를 조절할 수 있다 */
+function makeFreeplayLevel(boardSize, style, rank, name) {
   const n = boardSize || 19;
+  const st = style === "cn" ? "cn" : "jp";
+  const r = Math.max(1, Math.min(9, rank || 9));
+  const opponentName = name || pickOpponentName(st);
+  const styleLabel = st === "cn" ? "중국" : "일본";
+  const opponentLabel = `${styleLabel} 기사 ${opponentName} ${r}단`;
+  const skill = 0.2 + ((r - 1) / 8) * 0.75;
   return {
-    level: "free", tier: 0, tierName: "실전 연습", difficulty: 0, intensity: 3,
+    level: "free", tier: 0, tierName: `실전 연습 · ${opponentLabel}`, difficulty: 0, intensity: 3,
     conceptText: {
-      std: `지금까지 배운 것을 활용해 ${n}줄 바둑판에서 자유롭게 실전 대국을 해보세요. 목표 집수는 없고, 두 번 연속 패스하면 대국이 끝나고 집을 계산해요.`,
-      kid: `배운 걸 다 써서 자유롭게 대국해봐요! 둘 다 연속으로 쉬면(패스) 끝나고 집을 세어요 😊`,
+      std: `${opponentLabel}과(와) ${n}줄 바둑판에서 실전 대국을 해보세요. 두 번 연속 패스하면 대국이 끝나고 집을 계산해요.`,
+      kid: `${opponentLabel}이랑 자유롭게 대국해봐요! 둘 다 연속으로 쉬면(패스) 끝나고 집을 세어요 😊`,
     },
-    boardSize: n, stones: [], marked: [], whiteAI: "greedy",
+    boardSize: n, stones: [], marked: [], whiteAI: "ranked", aiSkill: skill, opponentLabel,
     goal: { type: "score", margin: 1, plyCap: 200 },
-    goalText: "자유 대국이에요. 정해진 목표 없이 마음껏 두고, 두 번 연속 패스하면 집을 계산해요.",
+    goalText: `${opponentLabel}과(와)의 자유 대국이에요. 목표 집수는 없고, 두 번 연속 패스하면 집을 계산해요.`,
   };
 }
-function startFreePlay(boardSize) {
-  App.freeplaySize = boardSize || 19;
-  enterLevel(makeFreeplayLevel(App.freeplaySize));
+function startFreePlay(boardSize, style, rank, name) {
+  App.freeplaySize = boardSize || App.freeplaySize || 19;
+  App.freeplayStyle = style || App.freeplayStyle || "jp";
+  App.freeplayRank = rank || App.freeplayRank || 9;
+  App.freeplayName = name || App.freeplayName || pickOpponentName(App.freeplayStyle);
+  enterLevel(makeFreeplayLevel(App.freeplaySize, App.freeplayStyle, App.freeplayRank, App.freeplayName));
 }
 
 function enterLevel(level) {
@@ -1063,7 +1168,7 @@ function enterLevel(level) {
   App.lastAutoCoach = 0;
   App.blackPassStreak = 0; // 학습자가 연속 2번 패스하면 바로 계가
 
-  $("play-title").textContent = lv === "free" ? "🎮 실전 연습" : `${lv}단계 · ${level.tierName}`;
+  $("play-title").textContent = lv === "free" ? `🎮 ${level.tierName}` : `${lv}단계 · ${level.tierName}`;
   $("play-coach-level").textContent = `AI 도움: ${COACH_LABELS[level.intensity]}`;
   $("goal-text").textContent = level.goalText;
   $("concept-text").textContent = kidMode() ? level.conceptText.kid : level.conceptText.std;
