@@ -260,6 +260,7 @@
     <button class="secondary" id="btn-quit">← 나가기</button>
     <h2 id="play-title" style="margin:0"></h2>
     <span class="spacer"></span>
+    <button class="secondary" id="btn-sound" style="min-height:36px; padding:4px 12px">🔊</button>
     <span id="play-coach-level" class="hint-text"></span>
   </div>
 
@@ -272,6 +273,10 @@
       <div class="status-line" style="margin-top:10px">
         <span>차례: <b id="st-turn">흑(나)</b></span>
         <span id="st-moves"></span>
+      </div>
+      <div class="status-line" style="margin-top:8px">
+        <span>⚫ 흑집(추정): <b id="st-score-black">0</b></span>
+        <span>⚪ 백집(추정): <b id="st-score-white">0</b></span>
         <span>잡은 돌: <b id="st-caps">0</b></span>
         <span id="st-lost"></span>
       </div>
@@ -398,6 +403,61 @@ async function callGemini(apiKey, systemText, userText) {
   if (!parts || !parts.length) throw new Error("응답이 비어 있어요");
   return parts.map((p) => p.text || "").join("").trim();
 }
+
+/* ═══ 효과음 (외부 음원 없이 Web Audio API로 즉석 생성, 게임 독립적이라
+   장기/체스 버전에서도 그대로 재사용 가능) ═══ */
+const SoundFX = {
+  ctx: null, muted: false,
+  init() {
+    this.muted = localStorage.getItem("badukMaster.muted") === "1";
+  },
+  ensureCtx() {
+    if (this.muted) return null;
+    if (!this.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    }
+    if (this.ctx.state === "suspended") this.ctx.resume();
+    return this.ctx;
+  },
+  tone(freq, duration, type, gainStart, delay) {
+    const ctx = this.ensureCtx();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + (delay || 0);
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || "sine";
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(gainStart || 0.15, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.02);
+  },
+  place() { this.tone(720, 0.06, "triangle", 0.18); },
+  capture(n) {
+    this.tone(480, 0.12, "sawtooth", 0.13);
+    this.tone(320, 0.16, "sawtooth", 0.10, 0.05);
+    if (n > 1) this.tone(240, 0.18, "sawtooth", 0.08, 0.1);
+  },
+  illegal() { this.tone(140, 0.15, "square", 0.10); },
+  clear() {
+    this.tone(523.25, 0.14, "sine", 0.16);
+    this.tone(659.25, 0.14, "sine", 0.16, 0.12);
+    this.tone(783.99, 0.22, "sine", 0.18, 0.24);
+  },
+  fail() {
+    this.tone(330, 0.18, "sine", 0.13);
+    this.tone(247, 0.26, "sine", 0.13, 0.15);
+  },
+  toggleMute() {
+    this.muted = !this.muted;
+    localStorage.setItem("badukMaster.muted", this.muted ? "1" : "0");
+    return this.muted;
+  },
+};
+SoundFX.init();
 
 /* ═══════════════════════════════════════════════════════════════════════
    § B. 바둑 규칙 엔진 (게임 종속 계층 — 외부 라이브러리 없이 직접 구현)
@@ -1312,6 +1372,10 @@ function updateStatus() {
   $("st-caps").textContent = e.captures[BLACK];
   $("st-lost").innerHTML = e.captures[WHITE] > 0 ? `잃은 돌: <b>${e.captures[WHITE]}</b>` : "";
   $("st-turn").textContent = App.finished ? "끝" : (e.turn === BLACK ? "흑(나)" : "백(상대)");
+  // 대국 중 실시간 집 계산 추정치(간이 계산, 최종 결과는 계가 시 다시 계산됨)
+  const live = scoreBoard(e.board, e.n);
+  $("st-score-black").textContent = live.black;
+  $("st-score-white").textContent = live.white;
   const g = L.goal;
   if (g.type === "score") {
     const plies = e.history.length;
@@ -1340,8 +1404,10 @@ async function playerMove(x, y) {
   if (!res.ok) {
     App.illegalCount++;
     toast(ILLEGAL_MSG[res.reason]());
+    SoundFX.illegal();
     return;
   }
+  if (res.captured > 0) SoundFX.capture(res.captured); else SoundFX.place();
   App.blackPassStreak = 0;
   App.busy = true;
   renderBoard(); updateStatus();
@@ -1370,8 +1436,11 @@ async function whiteReply() {
     if (mv) {
       const r2 = e.play(mv.x, mv.y, WHITE);
       if (!r2.ok) e.pass(WHITE);
-      else if (r2.captured > 0 && L.intensity === 4) {
-        coachComment("mistake", { what: `방금 백에게 흑돌 ${r2.captured}개를 잡혔어요` });
+      else {
+        if (r2.captured > 0) SoundFX.capture(r2.captured); else SoundFX.place();
+        if (r2.captured > 0 && L.intensity === 4) {
+          coachComment("mistake", { what: `방금 백에게 흑돌 ${r2.captured}개를 잡혔어요` });
+        }
       }
     } else e.pass(WHITE);
     renderBoard();
@@ -1474,6 +1543,7 @@ function finishLevel(cleared, whyFail) {
   const L = App.level;
   const stars = cleared ? computeStars() : 0;
   if (cleared && typeof L.level === "number") Progress.setStars(L.level, stars);
+  if (cleared) SoundFX.clear(); else SoundFX.fail();
 
   $("result-title").textContent = cleared
     ? TXT("🎉 클리어!", "🎉 참 잘했어요!")
@@ -1535,6 +1605,9 @@ function replayCurrentLevel() {
 $("btn-restart").addEventListener("click", replayCurrentLevel);
 $("btn-quit").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
 $("btn-hint").addEventListener("click", () => coachComment("hint", {}));
+function updateSoundButton() { $("btn-sound").textContent = SoundFX.muted ? "🔇" : "🔊"; }
+updateSoundButton();
+$("btn-sound").addEventListener("click", () => { SoundFX.toggleMute(); updateSoundButton(); if (!SoundFX.muted) SoundFX.place(); });
 
 $("btn-retry").addEventListener("click", replayCurrentLevel);
 $("btn-to-levels").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
