@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<!--
+  아이스크림 영어 마스터 (Ice Cream English Master) — 1~100단계 영단어 스펠링 학습 앱
+  바둑/장기/체스/축구수학 마스터와 동일한 아키텍처(게임 독립 계층/게임 종속 계층 분리) 재사용.
+  단일 HTML, 인라인 CSS/JS, 외부 라이브러리 없음. 진행상황/API키는 localStorage에만 저장.
+  단어 발음은 브라우저 내장 Web Speech API(SpeechSynthesis)로 재생하며 외부 음원이 필요 없다.
+  정답을 맞힐 때마다 아이스크림 스쿱이 한 층씩 쌓이는 보상으로 스펠링 연습을 게임화한다.
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>아이스크림 영어 마스터 — 1~100단계 영단어 학습</title>
+<style>
+  :root {
+    --fs: 16px; --btn-h: 44px;
+    --ink: #4a3326; --paper: #fff8f2;
+    --accent: #e0688a; --accent-2: #6d4aa8; --warn: #c62828;
+    --card: #ffffff; --shadow: 0 2px 8px rgba(0,0,0,.12);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    font-size: var(--fs); background: linear-gradient(160deg, #fff3f6, #fef0da);
+    color: var(--ink); min-height: 100vh;
+  }
+  body.age-0 { --fs: 22px; --btn-h: 60px; }
+  body.age-1 { --fs: 20px; --btn-h: 56px; }
+  body.age-2 { --fs: 18px; --btn-h: 50px; }
+  body.age-3 { --fs: 16px; --btn-h: 44px; }
+  body.age-4 { --fs: 16px; --btn-h: 44px; }
+
+  .screen { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+  .screen.active { display: block; }
+  h1 { font-size: 1.9em; margin-bottom: .3em; }
+  h2 { font-size: 1.35em; margin: .6em 0 .4em; }
+  .subtitle { color: #8a6a56; margin-bottom: 1.2em; }
+
+  button {
+    font-family: inherit; font-size: 1em; cursor: pointer;
+    border: none; border-radius: 12px; min-height: var(--btn-h);
+    padding: 8px 20px; background: var(--accent); color: #fff;
+    box-shadow: var(--shadow); transition: transform .08s, filter .15s;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: scale(.97); }
+  button:disabled { background: #d9c8bd; cursor: not-allowed; }
+  button.secondary { background: #fff; color: var(--ink); border: 2px solid #f0cdd8; }
+  button.blue { background: var(--accent-2); }
+  button.big { font-size: 1.2em; padding: 12px 32px; }
+
+  .panel { background: var(--paper); border-radius: 16px; padding: 20px; box-shadow: var(--shadow); margin-bottom: 16px; }
+  label.field-label { display: block; font-weight: 700; margin-bottom: 6px; }
+  select, input[type=password], input[type=text], input[type=number] {
+    font-family: inherit; font-size: 1em; width: 100%;
+    padding: 10px 12px; border: 2px solid #f0cdd8; border-radius: 10px; background: #fff; color: var(--ink);
+  }
+  .hint-text { font-size: .82em; color: #8a6a56; margin-top: 6px; line-height: 1.5; }
+  .check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .check-row input { width: 1.2em; height: 1.2em; }
+
+  .tier-block { margin-bottom: 22px; }
+  .tier-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 6px 4px; border-bottom: 3px solid #f2a6bf; margin-bottom: 10px;
+  }
+  .tier-head .tier-num { font-weight: 800; color: var(--accent); }
+  .tier-head .tier-coach { font-size: .78em; color: #8a6a56; margin-left: auto; }
+  .level-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+  .level-card {
+    background: var(--card); border-radius: 12px; padding: 8px 6px; text-align: center;
+    box-shadow: var(--shadow); cursor: pointer; border: 2px solid transparent; user-select: none;
+  }
+  .level-card:hover { border-color: var(--accent); }
+  .level-card.locked { opacity: .45; cursor: not-allowed; background: #f1e6e0; }
+  .level-card.locked:hover { border-color: transparent; }
+  .level-card .lv-num { font-weight: 800; font-size: 1.05em; }
+  .level-card .lv-stars { color: #f2a900; letter-spacing: 1px; font-size: .95em; }
+  .level-card .lv-coach { font-size: .68em; color: #96796a; }
+  .top-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .top-bar .spacer { flex: 1; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .controls button { flex: 1 1 auto; min-width: 90px; }
+
+  .play-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+  .field-col { flex: 2 1 480px; min-width: 320px; }
+  .side-col { flex: 1 1 300px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
+
+  .goal-box { background: #fff8e6; border: 2px solid #e8c97a; border-radius: 12px; padding: 12px 14px; line-height: 1.5; margin-bottom: 10px; }
+  .goal-box .goal-title { font-weight: 800; color: #8a6d1a; }
+
+  .scoreboard {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    background: #4a2b3a; color: #fff; border-radius: 14px; padding: 14px 10px; margin-bottom: 10px;
+    font-weight: 800; font-size: 1.15em; box-shadow: var(--shadow);
+  }
+  .scoreboard .lbl { font-size: .6em; font-weight: 700; opacity: .85; display: block; }
+
+  /* ── 아이스크림 콘 & 스쿱 스택 ── */
+  #cone-area {
+    position: relative; background: linear-gradient(180deg, #fdeeee, #fbe3d4);
+    border-radius: 14px; box-shadow: var(--shadow); border: 6px solid #fff;
+    height: 300px; display: flex; flex-direction: column-reverse; align-items: center;
+    padding-bottom: 6px; overflow: visible;
+  }
+  #cone {
+    width: 0; height: 0; border-left: 34px solid transparent; border-right: 34px solid transparent;
+    border-top: 70px solid #d99a4e; position: relative; z-index: 1; filter: drop-shadow(0 2px 2px rgba(0,0,0,.15));
+  }
+  #cone::before {
+    content: ""; position: absolute; top: -70px; left: -34px; width: 68px; height: 70px;
+    background: repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 4px, transparent 4px 10px),
+                repeating-linear-gradient(-45deg, rgba(255,255,255,.15) 0 4px, transparent 4px 10px);
+  }
+  #scoop-stack { display: flex; flex-direction: column-reverse; align-items: center; position: relative; z-index: 2; }
+  .scoop {
+    width: 74px; height: 46px; border-radius: 50% 50% 46% 46% / 60% 60% 40% 40%;
+    margin-bottom: -14px; box-shadow: inset 0 -6px 10px rgba(0,0,0,.12), 0 2px 3px rgba(0,0,0,.15);
+    animation: scoopPop .35s ease-out;
+  }
+  .scoop.cherry::after { content: "🍒"; position: absolute; margin-top: -40px; margin-left: 24px; font-size: 1.3em; }
+  @keyframes scoopPop { from { transform: scale(.3) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
+  #cone-empty-msg { color: #a98a76; font-size: .9em; margin-bottom: 10px; text-align: center; }
+
+  #call-flash {
+    position: absolute; top: 20px; left: 50%; transform: translate(-50%, -10px) scale(.6); opacity: 0;
+    font-size: 1.8em; font-weight: 900; text-shadow: 0 3px 8px rgba(0,0,0,.25); pointer-events: none;
+    transition: opacity .18s, transform .18s; z-index: 10; text-align: center; white-space: nowrap;
+  }
+  #call-flash.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  #call-flash.good { color: #d6336c; }
+  #call-flash.bad { color: #6b4a3a; }
+
+  .problem-box { text-align: center; background: #fff; border-radius: 14px; padding: 22px 16px; margin-top: 12px; box-shadow: var(--shadow); }
+  #word-hint { font-size: 1.05em; color: #8a6a56; margin-bottom: 10px; }
+  .listen-row { display: flex; gap: 10px; justify-content: center; margin-bottom: 14px; }
+  #slots { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .slot {
+    width: 40px; height: 46px; border-bottom: 4px solid var(--accent-2); border-radius: 6px 6px 0 0;
+    display: flex; align-items: center; justify-content: center; font-size: 1.5em; font-weight: 800;
+    background: #faf5ff;
+  }
+  .slot.filled { background: #efe3ff; }
+  #letter-bank { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; max-width: 480px; margin: 0 auto; }
+  .letter-tile {
+    min-width: 44px; min-height: 44px; font-size: 1.2em; font-weight: 800; background: #fff;
+    color: var(--ink); border: 2px solid #f0cdd8; box-shadow: none; padding: 6px 10px;
+  }
+  .letter-tile.used { visibility: hidden; }
+  #btn-backspace { margin-top: 12px; }
+
+  .status-line {
+    display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; font-size: .9em;
+    background: #fff; border-radius: 10px; padding: 8px 12px; box-shadow: var(--shadow); margin-top: 10px;
+  }
+  .status-line b { color: var(--accent-2); }
+
+  .coach-box { background: var(--paper); border-radius: 16px; padding: 14px; box-shadow: var(--shadow); min-height: 110px; }
+  .coach-head { display: flex; align-items: center; gap: 8px; font-weight: 800; margin-bottom: 8px; }
+  .coach-head .badge { font-size: .7em; font-weight: 600; background: #fbe3ea; color: var(--accent); border-radius: 999px; padding: 2px 10px; }
+  .bubble {
+    background: #fff; border-radius: 12px; border: 1.5px solid #f0d9cf; padding: 10px 12px;
+    margin-bottom: 8px; line-height: 1.55; font-size: .95em; animation: pop .18s ease-out;
+  }
+  .bubble.sys { background: #eef4ff; border-color: #b9cdf0; }
+  .bubble.err { background: #fdecec; border-color: #eebbbb; color: var(--warn); }
+  .bubble.loading { color: #8a6a56; font-style: italic; }
+  @keyframes pop { from { transform: scale(.96); opacity: .4; } to { transform: scale(1); opacity: 1; } }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: rgba(74,43,58,.92); color: #fff; padding: 10px 22px; border-radius: 999px;
+    font-size: .95em; opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 50;
+    max-width: 90vw; text-align: center;
+  }
+  #toast.show { opacity: 1; }
+
+  .result-card { text-align: center; padding: 36px 20px; }
+  .result-stars { font-size: 3em; color: #f2a900; letter-spacing: 6px; margin: 12px 0; }
+  .result-title { font-size: 1.7em; font-weight: 800; }
+  .result-msg { margin: 10px auto 22px; max-width: 460px; line-height: 1.6; }
+  .result-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+</style>
+</head>
+<body class="age-4">
+
+<div id="screen-start" class="screen active">
+  <h1>🍦 아이스크림 영어 마스터</h1>
+  <p class="subtitle">1단계부터 100단계까지, 단어를 듣고 알파벳을 골라 아이스크림을 쌓으며 영단어를 배워요.</p>
+  <div class="panel">
+    <label class="field-label" for="age-select">누가 배우나요?</label>
+    <select id="age-select">
+      <option value="0">유아 (5~7세)</option>
+      <option value="1">초등 저학년</option>
+      <option value="2">초등 고학년</option>
+      <option value="3">중학생 이상</option>
+      <option value="4" selected>성인</option>
+    </select>
+    <p class="hint-text">선택에 따라 글자 크기와 설명 방식이 달라져요.</p>
+  </div>
+  <div class="panel">
+    <label class="field-label" for="api-key">Gemini API 키 (AI 코치용, 선택)</label>
+    <input type="password" id="api-key" placeholder="AI 코치를 쓰려면 API 키를 입력하세요" autocomplete="off">
+    <div class="check-row">
+      <input type="checkbox" id="save-key">
+      <label for="save-key">이 브라우저에 키 저장</label>
+    </div>
+    <p class="hint-text">
+      🔒 이 키는 이 브라우저에만 저장되며 외부로 전송되지 않습니다. 공용 컴퓨터에서는 저장하지 마세요.<br>
+      키가 없어도 AI 코치 없이 모든 단계를 플레이할 수 있어요. 단어 발음은 브라우저 기능으로 재생돼요.
+    </p>
+  </div>
+  <button class="big" id="btn-start">학습 시작 ▶</button>
+</div>
+
+<div id="screen-levels" class="screen">
+  <div class="top-bar">
+    <h1 style="font-size:1.4em">단계 선택</h1>
+    <span id="progress-summary" class="hint-text"></span>
+    <span class="spacer"></span>
+    <button class="secondary" id="btn-settings">⚙ 설정</button>
+  </div>
+
+  <div class="panel">
+    <b>🍨 지금 바로 아이스크림 쌓기 연습하고 싶나요?</b>
+    <p class="hint-text">단계와 상관없이 원하는 주제로 자유롭게 연습할 수 있어요. 별점과 진행 기록에는 반영되지 않아요.</p>
+    <div class="controls" style="margin-top:10px">
+      <select id="freeplay-tier" style="max-width:220px"></select>
+    </div>
+    <div class="controls" style="margin-top:10px">
+      <button class="blue" id="btn-freeplay">🍦 연습 시작</button>
+    </div>
+    <div class="controls" style="margin-top:10px; align-items:center">
+      <label for="jump-level" style="font-weight:700; align-self:center">원하는 단계로 바로 이동:</label>
+      <input type="number" id="jump-level" min="1" max="100" value="1" style="max-width:90px">
+      <button class="secondary" id="btn-jump-level" style="flex:0 0 auto">이동</button>
+    </div>
+  </div>
+
+  <div id="tier-list"></div>
+</div>
+
+<div id="screen-play" class="screen">
+  <div class="top-bar">
+    <button class="secondary" id="btn-quit">← 나가기</button>
+    <h2 id="play-title" style="margin:0"></h2>
+    <span class="spacer"></span>
+    <button class="secondary" id="btn-sound" style="min-height:36px; padding:4px 12px">🔊</button>
+    <span id="play-coach-level" class="hint-text"></span>
+  </div>
+  <div class="play-wrap">
+    <div class="field-col">
+      <div class="goal-box">
+        <span class="goal-title">🎯 목표: </span><span id="goal-text"></span>
+      </div>
+      <div class="scoreboard">
+        <span><span class="lbl">맞힌 단어</span><span id="score-good">0</span></span>
+        <span class="lbl">/</span>
+        <span><span class="lbl">전체 단어</span><span id="score-total">0</span></span>
+      </div>
+      <div id="cone-area">
+        <div id="call-flash"></div>
+        <div id="cone-empty-msg">정답을 맞히면 아이스크림이 쌓여요!</div>
+        <div id="scoop-stack"></div>
+        <div id="cone"></div>
+      </div>
+      <div class="problem-box">
+        <div id="word-hint"></div>
+        <div class="listen-row">
+          <button class="blue" id="btn-listen">🔊 단어 듣기</button>
+        </div>
+        <div id="slots"></div>
+        <div id="letter-bank"></div>
+        <button class="secondary" id="btn-backspace">⌫ 지우기</button>
+      </div>
+      <div class="status-line">
+        <span>문제: <b id="st-progress">0/0</b></span>
+        <button class="secondary" id="btn-hint" style="display:none; min-height:32px; padding:4px 14px">💡 힌트</button>
+      </div>
+    </div>
+    <div class="side-col">
+      <div class="coach-box">
+        <div class="coach-head">🧑‍🏫 AI 코치 <span class="badge" id="coach-badge"></span></div>
+        <div id="coach-messages"></div>
+      </div>
+      <div class="panel" style="margin:0">
+        <b>📖 이번 단계 개념</b>
+        <p id="concept-text" style="margin-top:6px; line-height:1.6"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="screen-result" class="screen">
+  <div class="panel result-card">
+    <div class="result-title" id="result-title"></div>
+    <div class="result-stars" id="result-stars"></div>
+    <p class="result-msg" id="result-msg"></p>
+    <div id="result-coach" style="max-width:520px;margin:0 auto 20px;text-align:left"></div>
+    <div class="result-btns">
+      <button class="secondary" id="btn-retry">🔄 다시 도전</button>
+      <button class="secondary" id="btn-to-levels">📋 단계 목록</button>
+      <button id="btn-next" class="big">다음 단계 ▶</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ═══ § A. 게임 독립 계층 (바둑/장기/체스/축구수학 마스터와 동일) ═══ */
+
+const AGE_GROUPS = [
+  { id: 0, name: "유아",        promptDesc: "5~7세 유아. 아주 쉬운 단어와 이모지를 써서" },
+  { id: 1, name: "초등 저학년", promptDesc: "초등학교 1~3학년 어린이. 쉬운 단어로 재미있게" },
+  { id: 2, name: "초등 고학년", promptDesc: "초등학교 4~6학년 어린이. 친근하고 명확하게" },
+  { id: 3, name: "중학생 이상", promptDesc: "중고등학생. 또래 멘토처럼 편하게" },
+  { id: 4, name: "성인",        promptDesc: "성인 학습자. 표준적인 존댓말로 간결하게" },
+];
+
+const STORE = { progress: "englishMaster.progress", apiKey: "englishMaster.apiKey", age: "englishMaster.age" };
+
+const Progress = {
+  data: {},
+  load() { try { this.data = JSON.parse(localStorage.getItem(STORE.progress) || "{}"); } catch (e) { this.data = {}; } },
+  save() { try { localStorage.setItem(STORE.progress, JSON.stringify(this.data)); } catch (e) {} },
+  stars(lv) { return this.data[lv] || 0; },
+  setStars(lv, s) { if (s > this.stars(lv)) { this.data[lv] = s; this.save(); } },
+  isUnlocked(lv) { return lv === 1 || this.stars(lv - 1) > 0; },
+  clearedCount() { return Object.keys(this.data).length; },
+};
+
+function makeRng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const randInt = (rng, a, b) => a + Math.floor(rng() * (b - a + 1));
+function shuffled(rng, arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+function intensityForLevel(lv) {
+  if (lv <= 20) return 5;
+  if (lv <= 40) return 4;
+  if (lv <= 60) return 3;
+  if (lv <= 80) return 2;
+  return 1;
+}
+const COACH_LABELS = { 5: "많음", 4: "보통", 3: "적음", 2: "최소", 1: "없음" };
+
+const GEMINI_ENDPOINT =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=";
+
+async function callGemini(apiKey, systemText, userText) {
+  const res = await fetch(GEMINI_ENDPOINT + encodeURIComponent(apiKey), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: systemText }] },
+      contents: [{ role: "user", parts: [{ text: userText }] }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 300 },
+    }),
+  });
+  if (!res.ok) {
+    let msg = "HTTP " + res.status;
+    try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
+    const err = new Error(msg); err.status = res.status; throw err;
+  }
+  const data = await res.json();
+  const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+  if (!parts || !parts.length) throw new Error("응답이 비어 있어요");
+  return parts.map((p) => p.text || "").join("").trim();
+}
+
+/* ═══ 발음 재생: 브라우저 내장 Web Speech API(SpeechSynthesis) 사용, 외부 음원 불필요 ═══ */
+const Speech = {
+  supported: typeof window !== "undefined" && "speechSynthesis" in window,
+  speak(word) {
+    if (!this.supported) { toast(TXT("이 브라우저는 발음 재생을 지원하지 않아요. 눈으로 스펠링을 확인해 보세요!",
+                                      "발음을 들을 수 없어요! 눈으로 철자를 봐요 👀")); return; }
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(word);
+      u.lang = "en-US";
+      u.rate = 0.82;
+      window.speechSynthesis.speak(u);
+    } catch (e) { /* 조용히 무시: 발음 없이도 학습은 계속 가능 */ }
+  },
+};
+
+/* ═══ 효과음 (외부 음원 없이 Web Audio API로 즉석 생성, 게임 독립적) ═══ */
+const SoundFX = {
+  ctx: null, muted: false,
+  init() { this.muted = localStorage.getItem("englishMaster.muted") === "1"; },
+  ensureCtx() {
+    if (this.muted) return null;
+    if (!this.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    }
+    if (this.ctx.state === "suspended") this.ctx.resume();
+    return this.ctx;
+  },
+  tone(freq, duration, type, gainStart, delay) {
+    const ctx = this.ensureCtx();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + (delay || 0);
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || "sine";
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(gainStart || 0.15, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.02);
+  },
+  tap() { this.tone(500, 0.05, "triangle", 0.13); },
+  scoop() {
+    this.tone(660, 0.1, "sine", 0.16);
+    this.tone(880, 0.12, "sine", 0.16, 0.09);
+    this.tone(1046.5, 0.16, "sine", 0.15, 0.18);
+  },
+  miss() { this.tone(180, 0.22, "sawtooth", 0.12); this.tone(120, 0.26, "sawtooth", 0.09, 0.08); },
+  clear() {
+    this.tone(523.25, 0.14, "sine", 0.16);
+    this.tone(659.25, 0.14, "sine", 0.16, 0.12);
+    this.tone(783.99, 0.22, "sine", 0.18, 0.24);
+  },
+  fail() { this.tone(330, 0.18, "sine", 0.13); this.tone(247, 0.26, "sine", 0.13, 0.15); },
+  toggleMute() {
+    this.muted = !this.muted;
+    localStorage.setItem("englishMaster.muted", this.muted ? "1" : "0");
+    return this.muted;
+  },
+};
+SoundFX.init();
+
+/* ═══ § B. 단어 풀 & 절차적 생성 (게임 종속 계층) ═══ */
+
+const TIER_CONFIG = [
+  { tier: 1, concept: "쉬운 세 글자 단어" },
+  { tier: 2, concept: "네 글자 기본 단어" },
+  { tier: 3, concept: "동물 이름" },
+  { tier: 4, concept: "과일과 음식" },
+  { tier: 5, concept: "색깔과 도형" },
+  { tier: 6, concept: "가족과 신체 부위" },
+  { tier: 7, concept: "학교 물건" },
+  { tier: 8, concept: "동작을 나타내는 말" },
+  { tier: 9, concept: "날씨와 자연" },
+  { tier: 10, concept: "종합 실전 (어려운 단어)" },
+];
+
+const TIER_TEXT = {
+  1: { std: "쉬운 세 글자 영단어의 스펠링을 듣고 맞혀보는 연습이에요.",
+       kid: "짧고 쉬운 영어 단어를 듣고 철자를 맞혀봐요! 🐣" },
+  2: { std: "네 글자 정도의 기본 영단어를 듣고 스펠링을 완성해요.",
+       kid: "조금 더 긴 영어 단어에 도전해봐요! 📚" },
+  3: { std: "동물 이름 영단어를 듣고 스펠링을 완성해요.",
+       kid: "동물 친구들 이름을 영어로 배워봐요! 🐯" },
+  4: { std: "과일과 음식 이름 영단어를 연습해요.",
+       kid: "맛있는 과일과 음식 이름을 영어로 배워봐요! 🍎" },
+  5: { std: "색깔과 도형을 나타내는 영단어를 연습해요.",
+       kid: "예쁜 색깔과 모양 이름을 영어로 배워봐요! 🎨" },
+  6: { std: "가족 호칭과 신체 부위를 나타내는 영단어를 연습해요.",
+       kid: "가족과 우리 몸 이름을 영어로 배워봐요! 👨‍👩‍👧" },
+  7: { std: "학교에서 쓰는 물건 이름 영단어를 연습해요.",
+       kid: "학교에서 쓰는 물건 이름을 영어로 배워봐요! ✏️" },
+  8: { std: "동작을 나타내는 영단어(동사)를 연습해요.",
+       kid: "움직임을 나타내는 영어 단어를 배워봐요! 🏃" },
+  9: { std: "날씨와 자연 현상을 나타내는, 조금 더 긴 영단어를 연습해요.",
+       kid: "날씨와 자연 이름을 영어로 배워봐요! 조금 어려워요 🌈" },
+  10: { std: "지금까지 배운 것보다 더 길고 어려운 영단어로 종합 실전 연습을 해요.",
+        kid: "가장 길고 어려운 단어들이에요! 지금까지 배운 걸 다 써봐요 🏆" },
+};
+
+const WORD_POOLS = {
+  1: ["cat", "dog", "sun", "pen", "cup", "hat", "bus", "box", "run", "big", "red", "hot", "bed", "egg", "ant", "bag"],
+  2: ["fish", "bird", "book", "moon", "milk", "blue", "star", "tree", "ball", "cake", "door", "frog", "gift", "hand", "kite", "rain"],
+  3: ["tiger", "panda", "zebra", "sheep", "horse", "mouse", "snake", "whale", "eagle", "spider", "rabbit", "monkey", "turtle", "camel", "dolphin", "giraffe"],
+  4: ["apple", "grape", "mango", "bread", "pizza", "juice", "candy", "lemon", "onion", "potato", "banana", "orange", "cookie", "cheese", "chicken", "sandwich"],
+  5: ["yellow", "purple", "silver", "circle", "square", "oval", "triangle", "rectangle", "diamond", "golden", "violet", "crimson", "hexagon", "maroon", "indigo", "brown"],
+  6: ["mother", "father", "sister", "brother", "cousin", "nephew", "niece", "finger", "shoulder", "elbow", "stomach", "forehead", "eyebrow", "ankle", "wrist", "thumb"],
+  7: ["pencil", "eraser", "window", "teacher", "student", "computer", "notebook", "backpack", "scissors", "calendar", "calculator", "dictionary", "classroom", "blackboard", "textbook", "crayon"],
+  8: ["swim", "dance", "write", "listen", "speak", "travel", "whisper", "imagine", "discover", "celebrate", "exercise", "practice", "remember", "organize", "communicate", "jump"],
+  9: ["rainbow", "cloudy", "sunshine", "mountain", "thunder", "volcano", "tornado", "blizzard", "avalanche", "waterfall", "hurricane", "temperature", "atmosphere", "environment", "earthquake", "humidity"],
+  10: ["adventure", "wonderful", "beautiful", "important", "knowledge", "challenge", "opportunity", "imagination", "extraordinary", "responsibility", "communication", "appreciate", "determination", "confidence", "achievement", "curiosity"],
+};
+
+function decoyCountForDifficulty(d) {
+  if (d <= 3) return 0;
+  if (d <= 6) return 2;
+  return 4;
+}
+function makeWordProblem(rng, word, decoyCount) {
+  const letters = word.toUpperCase().split("");
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const decoys = [];
+  while (decoys.length < decoyCount) decoys.push(alphabet[randInt(rng, 0, 25)]);
+  const bank = shuffled(rng, letters.concat(decoys));
+  return { word, letters, bank };
+}
+function pickWords(rng, tier, count) {
+  const pool = WORD_POOLS[tier] || WORD_POOLS[1];
+  const n = Math.min(count, pool.length);
+  return shuffled(rng, pool).slice(0, n);
+}
+
+function makeLevel(lv) {
+  const tierIdx = Math.floor((lv - 1) / 10);
+  const cfg = TIER_CONFIG[tierIdx];
+  const d = ((lv - 1) % 10) + 1;
+  const rng = makeRng(lv * 1013904223 + 909);
+  const wordCount = 5 + Math.floor(d / 3);
+  const decoyCount = decoyCountForDifficulty(d);
+  const words = pickWords(rng, cfg.tier, wordCount);
+  const problems = words.map((w) => makeWordProblem(rng, w, decoyCount));
+  return {
+    level: lv, tier: cfg.tier, tierName: cfg.concept, difficulty: d,
+    intensity: intensityForLevel(lv), conceptText: TIER_TEXT[cfg.tier],
+    problems,
+    goalText: `${problems.length}개의 단어를 듣고 철자를 맞혀 아이스크림을 쌓으세요! 정답률 60% 이상이면 성공으로 기록돼요.`,
+  };
+}
+
+function makeFreeplayLevel(tier) {
+  const t = Math.max(1, Math.min(10, tier || 1));
+  const cfg = TIER_CONFIG[t - 1];
+  const rng = makeRng(Date.now() % 2147483647);
+  const wordCount = 8;
+  const words = pickWords(rng, t, wordCount);
+  const problems = words.map((w) => makeWordProblem(rng, w, 2));
+  return {
+    level: "free", tier: 0, tierName: `자유 연습 · ${cfg.concept}`, difficulty: 0, intensity: 3,
+    conceptText: TIER_TEXT[t],
+    problems,
+    goalText: `${problems.length}개의 단어를 자유롭게 연습해 보세요. 정답률 60% 이상이면 성공으로 기록돼요.`,
+  };
+}
+
+/* ═══ § C. 앱 상태 & UI ═══ */
+
+const $ = (id) => document.getElementById(id);
+const SCOOP_COLORS = ["#ffb6c8", "#a9714a", "#a7e8bd", "#fff3b0", "#f7b267", "#c9a7eb", "#7ec8e3", "#f4978e", "#ffd6a5", "#d0f4de"];
+const App = {
+  ageIdx: 4, apiKey: "", level: null, problemIndex: 0, correctCount: 0,
+  attempt: [], usedTileStack: [], busy: false, finished: false,
+  coachBusy: false, lastAutoCoach: 0, freeplayTier: 1,
+};
+function kidMode() { return App.ageIdx <= 1; }
+function TXT(std, kid) { return kidMode() ? kid : std; }
+function currentProblem() { return App.level ? App.level.problems[App.problemIndex] : null; }
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  $(id).classList.add("active");
+  window.scrollTo(0, 0);
+}
+let toastTimer = null;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function populateFreeplayTierSelect() {
+  const sel = $("freeplay-tier");
+  sel.innerHTML = "";
+  for (const cfg of TIER_CONFIG) {
+    const opt = document.createElement("option");
+    opt.value = String(cfg.tier);
+    opt.textContent = `티어${cfg.tier} · ${cfg.concept}`;
+    sel.appendChild(opt);
+  }
+}
+
+function initStartScreen() {
+  Progress.load();
+  populateFreeplayTierSelect();
+  const savedAge = localStorage.getItem(STORE.age);
+  if (savedAge !== null) $("age-select").value = savedAge;
+  const savedKey = localStorage.getItem(STORE.apiKey);
+  if (savedKey) { $("api-key").value = savedKey; $("save-key").checked = true; }
+  applyAge(parseInt($("age-select").value, 10));
+  $("age-select").addEventListener("change", () => applyAge(parseInt($("age-select").value, 10)));
+  $("btn-start").addEventListener("click", () => {
+    App.ageIdx = parseInt($("age-select").value, 10);
+    App.apiKey = $("api-key").value.trim();
+    localStorage.setItem(STORE.age, String(App.ageIdx));
+    if ($("save-key").checked && App.apiKey) localStorage.setItem(STORE.apiKey, App.apiKey);
+    else localStorage.removeItem(STORE.apiKey);
+    renderLevelSelect();
+    showScreen("screen-levels");
+  });
+  $("btn-settings").addEventListener("click", () => showScreen("screen-start"));
+  $("btn-freeplay").addEventListener("click", () => startFreePlay(parseInt($("freeplay-tier").value, 10)));
+  $("btn-jump-level").addEventListener("click", () => {
+    const n = parseInt($("jump-level").value, 10);
+    if (!n || n < 1 || n > 100) { toast(TXT("1~100 사이의 단계 번호를 입력하세요.", "1부터 100 사이 숫자를 넣어주세요!")); return; }
+    startLevel(n);
+  });
+}
+function applyAge(idx) { App.ageIdx = idx; document.body.className = "age-" + idx; }
+
+function renderLevelSelect() {
+  const wrap = $("tier-list");
+  wrap.innerHTML = "";
+  const cleared = Progress.clearedCount();
+  $("progress-summary").textContent = cleared > 0 ? `지금까지 ${cleared}단계 완료! 🎉` : "";
+  for (const cfg of TIER_CONFIG) {
+    const block = document.createElement("div");
+    block.className = "tier-block";
+    const startLv = (cfg.tier - 1) * 10 + 1;
+    const inten = intensityForLevel(startLv);
+    block.innerHTML = `
+      <div class="tier-head">
+        <span class="tier-num">티어 ${cfg.tier}</span>
+        <span>${cfg.concept}</span>
+        <span class="tier-coach">AI 도움: ${COACH_LABELS[inten]}</span>
+      </div>`;
+    const grid = document.createElement("div");
+    grid.className = "level-grid";
+    for (let i = 0; i < 10; i++) {
+      const lv = startLv + i;
+      const unlocked = Progress.isUnlocked(lv);
+      const stars = Progress.stars(lv);
+      const card = document.createElement("div");
+      card.className = "level-card" + (unlocked ? "" : " locked");
+      card.innerHTML = `
+        <div class="lv-num">${unlocked ? lv + "단계" : "🔒 " + lv}</div>
+        <div class="lv-stars">${"★".repeat(stars)}${"☆".repeat(Math.max(0, 3 - stars))}</div>
+        <div class="lv-coach">도움 ${COACH_LABELS[intensityForLevel(lv)]}</div>`;
+      if (unlocked) card.addEventListener("click", () => startLevel(lv));
+      else card.addEventListener("click", () => toast(TXT("이전 단계를 먼저 완료하세요!", "앞 단계를 먼저 깨야 열려요! 🔑")));
+      grid.appendChild(card);
+    }
+    block.appendChild(grid);
+    wrap.appendChild(block);
+  }
+}
+
+function startLevel(lv) { enterLevel(makeLevel(lv)); }
+function startFreePlay(tier) {
+  App.freeplayTier = tier || App.freeplayTier || 1;
+  enterLevel(makeFreeplayLevel(App.freeplayTier));
+}
+function replayCurrentLevel() {
+  if (!App.level) return;
+  if (App.level.level === "free") startFreePlay(App.freeplayTier);
+  else startLevel(App.level.level);
+}
+
+function enterLevel(level) {
+  const lv = level.level;
+  App.level = level;
+  App.problemIndex = 0; App.correctCount = 0;
+  App.busy = false; App.finished = false; App.lastAutoCoach = 0;
+
+  $("play-title").textContent = lv === "free" ? `🍦 ${level.tierName}` : `${lv}단계 · ${level.tierName}`;
+  $("play-coach-level").textContent = `AI 도움: ${COACH_LABELS[level.intensity]}`;
+  $("goal-text").textContent = level.goalText;
+  $("concept-text").textContent = kidMode() ? level.conceptText.kid : level.conceptText.std;
+  $("coach-badge").textContent = "도움 " + COACH_LABELS[level.intensity];
+  $("coach-messages").innerHTML = "";
+  $("btn-hint").style.display = level.intensity === 3 ? "" : "none";
+  $("score-good").textContent = "0"; $("score-total").textContent = String(level.problems.length);
+  $("scoop-stack").innerHTML = "";
+  $("cone-empty-msg").style.display = "";
+
+  const intro = {
+    5: TXT("매 단어마다 내가 도와줄게요. 편하게 골라보세요!", "선생님이 옆에서 다 도와줄게요! 걱정 말고 골라보세요 😊"),
+    4: TXT("틀렸을 때만 알려 드릴게요. 스스로 생각해 보세요.", "틀리면 살짝 알려 줄게요. 먼저 혼자 해 봐요! 💪"),
+    3: TXT("도움이 필요하면 힌트 버튼을 눌러 주세요.", "막히면 💡힌트 버튼을 눌러요!"),
+    2: TXT("이번엔 다 끝난 뒤에 총평만 해 드릴게요. 혼자 힘으로!", "다 끝나면 선생님이 이야기해 줄게요. 혼자 해 보자! 🌟"),
+    1: TXT("이제 코치 없이 실력을 보여줄 시간이에요!", "이제 진짜 혼자 힘으로 척척 골라보는 거예요! 🏆"),
+  }[level.intensity];
+  addBubble(intro, "sys");
+  if (!App.apiKey && level.intensity >= 2 && level.intensity <= 5) {
+    addBubble(TXT("(API 키가 없어 AI 코멘트는 쉬어요. 게임은 그대로 즐길 수 있어요!)",
+                  "(지금은 코치 선생님이 잠깐 자리를 비웠어요. 그래도 게임은 할 수 있어요!)"), "sys");
+  }
+  showScreen("screen-play");
+  loadProblem();
+}
+
+function loadProblem() {
+  const L = App.level;
+  const p = L.problems[App.problemIndex];
+  App.attempt = []; App.usedTileStack = [];
+  $("word-hint").textContent = TXT(`${p.letters.length}글자 단어를 들어보세요!`, `${p.letters.length}글자 단어예요! 잘 들어봐요 👂`);
+  $("st-progress").textContent = `${App.problemIndex + 1}/${L.problems.length}`;
+  renderSlots();
+  renderLetterBank();
+  Speech.speak(p.word);
+}
+
+function renderSlots() {
+  const p = currentProblem();
+  const wrap = $("slots");
+  wrap.innerHTML = "";
+  for (let i = 0; i < p.letters.length; i++) {
+    const box = document.createElement("div");
+    box.className = "slot" + (i < App.attempt.length ? " filled" : "");
+    box.textContent = i < App.attempt.length ? App.attempt[i] : "";
+    wrap.appendChild(box);
+  }
+}
+function renderLetterBank() {
+  const p = currentProblem();
+  const wrap = $("letter-bank");
+  wrap.innerHTML = "";
+  p.bank.forEach((ch, idx) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "letter-tile";
+    btn.textContent = ch;
+    btn.dataset.idx = String(idx);
+    btn.addEventListener("click", () => onLetterTileClick(idx));
+    wrap.appendChild(btn);
+  });
+}
+function onLetterTileClick(idx) {
+  if (App.busy || App.finished) return;
+  const p = currentProblem();
+  if (App.attempt.length >= p.letters.length) return;
+  const tileEl = document.querySelector(`.letter-tile[data-idx="${idx}"]`);
+  if (!tileEl || tileEl.classList.contains("used")) return;
+  tileEl.classList.add("used");
+  App.usedTileStack.push(idx);
+  App.attempt.push(p.bank[idx]);
+  SoundFX.tap();
+  renderSlots();
+  if (App.attempt.length === p.letters.length) checkAttempt();
+}
+function onBackspace() {
+  if (App.busy || App.finished) return;
+  if (!App.attempt.length) return;
+  App.attempt.pop();
+  const idx = App.usedTileStack.pop();
+  const tileEl = document.querySelector(`.letter-tile[data-idx="${idx}"]`);
+  if (tileEl) tileEl.classList.remove("used");
+  renderSlots();
+}
+$("btn-backspace").addEventListener("click", onBackspace);
+$("btn-listen").addEventListener("click", () => { const p = currentProblem(); if (p) Speech.speak(p.word); });
+
+document.addEventListener("keydown", (ev) => {
+  if (!$("screen-play").classList.contains("active")) return;
+  if (App.busy || App.finished) return;
+  if (ev.key === "Backspace") { onBackspace(); return; }
+  const k = ev.key.toUpperCase();
+  if (/^[A-Z]$/.test(k)) {
+    const p = currentProblem();
+    if (!p) return;
+    const idx = p.bank.findIndex((ch, i) => ch === k && !App.usedTileStack.includes(i));
+    if (idx >= 0) onLetterTileClick(idx);
+  }
+});
+
+function addScoop(colorIdx) {
+  const stack = $("scoop-stack");
+  $("cone-empty-msg").style.display = "none";
+  const scoop = document.createElement("div");
+  scoop.className = "scoop";
+  scoop.style.background = SCOOP_COLORS[colorIdx % SCOOP_COLORS.length];
+  stack.appendChild(scoop);
+}
+
+async function checkAttempt() {
+  App.busy = true;
+  const L = App.level;
+  const p = currentProblem();
+  const correct = App.attempt.join("") === p.letters.join("");
+  const flash = $("call-flash");
+  if (correct) {
+    App.correctCount++;
+    addScoop(App.correctCount - 1);
+    $("score-good").textContent = App.correctCount;
+    flash.textContent = TXT("맛있다!", "냠냠! 맛있어요 🍦");
+    flash.className = "show good";
+    SoundFX.scoop();
+  } else {
+    flash.textContent = TXT(`아쉬워요! 정답: ${p.word.toUpperCase()}`, `아깝다! 정답: ${p.word.toUpperCase()}`);
+    flash.className = "show bad";
+    SoundFX.miss();
+  }
+
+  if (L.intensity === 5) coachComment("auto", { problem: p, correct });
+  else if (L.intensity === 4 && !correct) coachComment("mistake", { problem: p, correct });
+
+  await new Promise((r) => setTimeout(r, 1000));
+  flash.classList.remove("show");
+
+  App.problemIndex++;
+  if (App.problemIndex >= L.problems.length) { App.busy = false; finishMatch(); return; }
+  loadProblem();
+  App.busy = false;
+}
+
+function finishMatch() {
+  if (App.finished) return;
+  App.finished = true;
+  const L = App.level;
+  const total = L.problems.length;
+  const accuracy = total ? App.correctCount / total : 0;
+  const cleared = accuracy >= 0.6;
+  const stars = !cleared ? 0 : accuracy >= 0.999 ? 3 : accuracy >= 0.8 ? 2 : 1;
+  if (cleared && typeof L.level === "number") Progress.setStars(L.level, stars);
+  if (cleared) SoundFX.clear(); else SoundFX.fail();
+  const lastScoop = $("scoop-stack").lastElementChild;
+  if (cleared && lastScoop) lastScoop.classList.add("cherry");
+
+  $("result-title").textContent = cleared
+    ? TXT(`🎉 아이스크림 완성! ${App.correctCount}/${total}`, `🎉 아이스크림 완성! ${App.correctCount}/${total}개 맞혔어요`)
+    : TXT(`아깝다, 다시 쌓아볼까요? ${App.correctCount}/${total}`, `아쉬워요! 다시 해봐요 💪 ${App.correctCount}/${total}개`);
+  $("result-stars").textContent = cleared ? "★".repeat(stars) + "☆".repeat(3 - stars) : "☆☆☆";
+
+  const pct = Math.round(accuracy * 100);
+  let msg = cleared
+    ? {
+        3: TXT("완벽해요! 모든 단어를 다 맞혔어요.", "우와, 다 맞혔어요! 최고예요 🌟🌟🌟"),
+        2: TXT("잘했어요! 조금만 더 다듬으면 만점도 가능해요.", "잘했어요! 다음엔 다 맞혀봐요 ⭐"),
+        1: TXT("성공했어요! 다시 도전하면 더 잘할 수 있어요.", "성공! 또 하면 더 잘할 수 있어요 ⭐"),
+      }[stars]
+    : TXT("천천히 다시 들어보면 분명 더 잘할 수 있어요!", "괜찮아요, 다시 하면 꼭 잘할 수 있어요! 😊");
+  msg += ` (${TXT("정답률", "맞힌 비율")} ${pct}%)`;
+  $("result-msg").textContent = msg;
+  $("result-coach").innerHTML = "";
+  const hasNext = cleared && L.level < 100;
+  $("btn-next").style.display = hasNext ? "" : "none";
+  if (L.intensity === 2 || (L.intensity >= 3 && cleared)) coachComment("summary", { cleared, stars, target: "result" });
+  showScreen("screen-result");
+}
+
+$("btn-quit").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
+$("btn-hint").addEventListener("click", () => coachComment("hint", {}));
+$("btn-retry").addEventListener("click", replayCurrentLevel);
+$("btn-to-levels").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
+$("btn-next").addEventListener("click", () => startLevel(App.level.level + 1));
+function updateSoundButton() { $("btn-sound").textContent = SoundFX.muted ? "🔇" : "🔊"; }
+updateSoundButton();
+$("btn-sound").addEventListener("click", () => { SoundFX.toggleMute(); updateSoundButton(); if (!SoundFX.muted) SoundFX.tap(); });
+
+/* ═══ § D. AI 코치 ═══ */
+
+function addBubble(text, cls, target) {
+  const box = target === "result" ? $("result-coach") : $("coach-messages");
+  const div = document.createElement("div");
+  div.className = "bubble" + (cls ? " " + cls : "");
+  div.textContent = text;
+  box.appendChild(div);
+  while (box.children.length > 6) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+const COACH_KIND_INSTRUCTION = {
+  auto: "학습자가 방금 단어 스펠링을 맞혔습니다. 이 단어의 뜻이나 기억하는 팁을 짧게 알려 주세요.",
+  mistake: "학습자가 방금 단어 스펠링을 틀렸습니다. 왜 헷갈렸을지 부드럽게 짚어주고 다시 도전하도록 격려해 주세요.",
+  hint: "학습자가 힌트를 요청했습니다. 정답 스펠링을 직접 말하지 말고, 이 단어의 뜻이나 첫 글자 같은 힌트만 알려 주세요.",
+  summary: "연습이 끝났습니다. 이번 판 전체에 대한 짧은 총평과 격려를 해 주세요.",
+};
+async function coachComment(kind, extra) {
+  const L = App.level;
+  if (!L || L.intensity === 1) return;
+  if (!App.apiKey) return;
+  if (App.coachBusy) return;
+  if (kind === "auto") {
+    const now = Date.now();
+    if (now - App.lastAutoCoach < 4000) return;
+    App.lastAutoCoach = now;
+  }
+  App.coachBusy = true;
+  const target = extra && extra.target;
+  const loading = addBubble(TXT("코치가 생각 중이에요...", "선생님이 생각하고 있어요... 🤔"), "loading", target);
+  const age = AGE_GROUPS[App.ageIdx];
+  const systemText = `당신은 친절한 영어 단어 코치입니다. ${age.promptDesc} 말해 주세요. ` +
+    `2~3문장 이내로 짧게 코멘트하세요. 정답 스펠링을 직접 알려주지 말고 스스로 생각하도록 유도하는 질문을 섞으세요. 따뜻하게 격려하는 말투를 유지하세요.`;
+  const p = extra && extra.problem;
+  const userText = [
+    `[학습 개념] ${L.tierName} — ${L.conceptText.std}`,
+    `[이번 단계 목표] ${L.goalText}`,
+    `[상황] ${COACH_KIND_INSTRUCTION[kind]}`,
+    p ? `[단어] ${p.word}` : "",
+    extra && typeof extra.correct === "boolean" ? `[결과] ${extra.correct ? "정답" : "오답"}` : "",
+    extra && typeof extra.cleared === "boolean" ? `[결과] ${extra.cleared ? "성공, 별 " + extra.stars + "개" : "이번에는 실패"}` : "",
+  ].filter(Boolean).join("\n");
+  try {
+    const text = await callGemini(App.apiKey, systemText, userText);
+    loading.remove(); addBubble(text, "", target);
+  } catch (err) {
+    loading.remove();
+    let friendly;
+    if (err.status === 400 || err.status === 403) friendly = TXT("API 키가 올바르지 않은 것 같아요. 설정에서 키를 확인해 주세요. (게임은 계속할 수 있어요!)", "코치 열쇠(API 키)가 안 맞나 봐요. 그래도 게임은 계속할 수 있어요!");
+    else if (err.status === 429) friendly = TXT("코치가 잠시 바빠요. 조금 있다가 다시 시도해 주세요.", "선생님이 지금 너무 바빠요! 조금만 기다려 줘요 ⏳");
+    else friendly = TXT("코치와 연결이 잠시 끊겼어요. 네트워크를 확인해 주세요. (게임은 계속 진행돼요!)", "선생님이랑 연결이 잠깐 끊겼어요. 게임은 계속할 수 있어요!");
+    addBubble(friendly, "err", target);
+  } finally { App.coachBusy = false; }
+}
+
+initStartScreen();
+</script>
+</body>
+</html>
