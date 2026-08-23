@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<!--
+  축구 수학 마스터 (Soccer Math Master) — 1~100단계 사칙연산 학습 앱
+  바둑/장기/체스 마스터와 동일한 아키텍처(게임 독립 계층/게임 종속 계층 분리) 재사용.
+  단일 HTML, 인라인 CSS/JS, 외부 라이브러리 없음. 진행상황/API키는 localStorage에만 저장.
+  축구를 좋아하는 아이들을 위해, 문제를 맞히면 우리팀이 골을 넣고 틀리면 상대팀이
+  골을 넣는 슛 대결 형식으로 더하기/빼기/곱하기/나누기를 연습한다.
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>축구 수학 마스터 — 1~100단계 사칙연산 학습</title>
+<style>
+  :root {
+    --fs: 16px; --btn-h: 44px;
+    --ink: #16321f; --paper: #faf6ee;
+    --accent: #2e7d32; --accent-2: #1565c0; --warn: #c62828;
+    --card: #ffffff; --shadow: 0 2px 8px rgba(0,0,0,.12);
+    --grass: #3e9147; --grass-dark: #2f7538;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    font-size: var(--fs); background: linear-gradient(160deg, #eef7ee, #dcefe0);
+    color: var(--ink); min-height: 100vh;
+  }
+  body.age-0 { --fs: 22px; --btn-h: 60px; }
+  body.age-1 { --fs: 20px; --btn-h: 56px; }
+  body.age-2 { --fs: 18px; --btn-h: 50px; }
+  body.age-3 { --fs: 16px; --btn-h: 44px; }
+  body.age-4 { --fs: 16px; --btn-h: 44px; }
+
+  .screen { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+  .screen.active { display: block; }
+  h1 { font-size: 1.9em; margin-bottom: .3em; }
+  h2 { font-size: 1.35em; margin: .6em 0 .4em; }
+  .subtitle { color: #4b6b53; margin-bottom: 1.2em; }
+
+  button {
+    font-family: inherit; font-size: 1em; cursor: pointer;
+    border: none; border-radius: 12px; min-height: var(--btn-h);
+    padding: 8px 20px; background: var(--accent); color: #fff;
+    box-shadow: var(--shadow); transition: transform .08s, filter .15s;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: scale(.97); }
+  button:disabled { background: #b9b2a3; cursor: not-allowed; }
+  button.secondary { background: #fff; color: var(--ink); border: 2px solid #bcd8bf; }
+  button.blue { background: var(--accent-2); }
+  button.big { font-size: 1.2em; padding: 12px 32px; }
+
+  .panel { background: var(--paper); border-radius: 16px; padding: 20px; box-shadow: var(--shadow); margin-bottom: 16px; }
+  label.field-label { display: block; font-weight: 700; margin-bottom: 6px; }
+  select, input[type=password], input[type=text], input[type=number] {
+    font-family: inherit; font-size: 1em; width: 100%;
+    padding: 10px 12px; border: 2px solid #bcd8bf; border-radius: 10px; background: #fff; color: var(--ink);
+  }
+  .hint-text { font-size: .82em; color: #5c7862; margin-top: 6px; line-height: 1.5; }
+  .check-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .check-row input { width: 1.2em; height: 1.2em; }
+
+  .tier-block { margin-bottom: 22px; }
+  .tier-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 6px 4px; border-bottom: 3px solid #7fbf85; margin-bottom: 10px;
+  }
+  .tier-head .tier-num { font-weight: 800; color: var(--accent); }
+  .tier-head .tier-coach { font-size: .78em; color: #5c7862; margin-left: auto; }
+  .level-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+  .level-card {
+    background: var(--card); border-radius: 12px; padding: 8px 6px; text-align: center;
+    box-shadow: var(--shadow); cursor: pointer; border: 2px solid transparent; user-select: none;
+  }
+  .level-card:hover { border-color: var(--accent); }
+  .level-card.locked { opacity: .45; cursor: not-allowed; background: #e7ede7; }
+  .level-card.locked:hover { border-color: transparent; }
+  .level-card .lv-num { font-weight: 800; font-size: 1.05em; }
+  .level-card .lv-stars { color: #f2a900; letter-spacing: 1px; font-size: .95em; }
+  .level-card .lv-coach { font-size: .68em; color: #6d8a72; }
+  .top-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .top-bar .spacer { flex: 1; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .controls button { flex: 1 1 auto; min-width: 90px; }
+
+  .play-wrap { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; }
+  .field-col { flex: 2 1 480px; min-width: 320px; }
+  .side-col { flex: 1 1 300px; min-width: 260px; display: flex; flex-direction: column; gap: 12px; }
+
+  .goal-box { background: #fff8e6; border: 2px solid #e8c97a; border-radius: 12px; padding: 12px 14px; line-height: 1.5; margin-bottom: 10px; }
+  .goal-box .goal-title { font-weight: 800; color: #8a6d1a; }
+
+  .scoreboard {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    background: #14361c; color: #fff; border-radius: 14px; padding: 14px 10px; margin-bottom: 10px;
+    font-weight: 800; font-size: 1.3em; box-shadow: var(--shadow);
+  }
+  .scoreboard .team { font-size: .55em; font-weight: 700; opacity: .85; display: block; }
+  .scoreboard .vs { font-size: .6em; opacity: .7; }
+
+  #pitch {
+    position: relative; background: repeating-linear-gradient(180deg, var(--grass), var(--grass) 40px, var(--grass-dark) 40px, var(--grass-dark) 80px);
+    border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+    height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    border: 6px solid #fff;
+  }
+  #goal-frame {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    width: 140px; height: 60px; border: 6px solid #fff; border-bottom: none; border-radius: 4px 4px 0 0;
+    background: repeating-linear-gradient(45deg, rgba(255,255,255,.15) 0 6px, transparent 6px 12px);
+  }
+  #keeper { position: absolute; top: 46px; left: 50%; transform: translate(-50%, 0); font-size: 2em; transition: transform .25s; }
+  #ball {
+    position: absolute; bottom: 18px; left: 50%; transform: translate(-50%, 0); font-size: 2.4em;
+    transition: transform .5s ease-in, opacity .3s .35s; z-index: 5;
+  }
+  #ball.fly-goal { transform: translate(-50%, -220px) scale(.5); }
+  #ball.fly-miss { transform: translate(calc(-50% + 90px), -170px) scale(.6) rotate(120deg); }
+  #call-flash {
+    position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%) scale(.6); opacity: 0;
+    font-size: 2.2em; font-weight: 900; text-shadow: 0 3px 10px rgba(0,0,0,.4); pointer-events: none;
+    transition: opacity .18s, transform .18s; z-index: 10; text-align: center; white-space: nowrap;
+  }
+  #call-flash.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  #call-flash.goal { color: #fff; }
+  #call-flash.miss { color: #ffe082; }
+
+  .problem-box {
+    text-align: center; background: #fff; border-radius: 14px; padding: 22px 16px; margin-top: 12px;
+    box-shadow: var(--shadow);
+  }
+  #problem-text { font-size: 2.4em; font-weight: 800; letter-spacing: 1px; }
+  .answer-row { display: flex; gap: 10px; justify-content: center; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  #answer-input {
+    width: 140px; font-size: 1.6em; text-align: center; padding: 10px; border-radius: 10px;
+    border: 3px solid var(--accent); font-weight: 800;
+  }
+  .keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; max-width: 260px; margin: 14px auto 0; }
+  .keypad button { min-height: 52px; font-size: 1.3em; font-weight: 800; background: #fff; color: var(--ink); border: 2px solid #bcd8bf; box-shadow: none; }
+  .keypad button.wide { grid-column: span 1; }
+
+  .status-line {
+    display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; font-size: .9em;
+    background: #fff; border-radius: 10px; padding: 8px 12px; box-shadow: var(--shadow); margin-top: 10px;
+  }
+  .status-line b { color: var(--accent-2); }
+
+  .coach-box { background: var(--paper); border-radius: 16px; padding: 14px; box-shadow: var(--shadow); min-height: 110px; }
+  .coach-head { display: flex; align-items: center; gap: 8px; font-weight: 800; margin-bottom: 8px; }
+  .coach-head .badge { font-size: .7em; font-weight: 600; background: #e3efe4; color: var(--accent); border-radius: 999px; padding: 2px 10px; }
+  .bubble {
+    background: #fff; border-radius: 12px; border: 1.5px solid #cfe3d1; padding: 10px 12px;
+    margin-bottom: 8px; line-height: 1.55; font-size: .95em; animation: pop .18s ease-out;
+  }
+  .bubble.sys { background: #eef4ff; border-color: #b9cdf0; }
+  .bubble.err { background: #fdecec; border-color: #eebbbb; color: var(--warn); }
+  .bubble.loading { color: #6d8a72; font-style: italic; }
+  @keyframes pop { from { transform: scale(.96); opacity: .4; } to { transform: scale(1); opacity: 1; } }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: rgba(20,54,28,.92); color: #fff; padding: 10px 22px; border-radius: 999px;
+    font-size: .95em; opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 50;
+    max-width: 90vw; text-align: center;
+  }
+  #toast.show { opacity: 1; }
+
+  .result-card { text-align: center; padding: 36px 20px; }
+  .result-stars { font-size: 3em; color: #f2a900; letter-spacing: 6px; margin: 12px 0; }
+  .result-title { font-size: 1.7em; font-weight: 800; }
+  .result-msg { margin: 10px auto 22px; max-width: 460px; line-height: 1.6; }
+  .result-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+</style>
+</head>
+<body class="age-4">
+
+<div id="screen-start" class="screen active">
+  <h1>⚽ 축구 수학 마스터</h1>
+  <p class="subtitle">1단계부터 100단계까지, 축구 슛 대결로 더하기·빼기·곱하기·나누기를 재미있게 배워요.</p>
+  <div class="panel">
+    <label class="field-label" for="age-select">누가 배우나요?</label>
+    <select id="age-select">
+      <option value="0">유아 (5~7세)</option>
+      <option value="1">초등 저학년</option>
+      <option value="2">초등 고학년</option>
+      <option value="3">중학생 이상</option>
+      <option value="4" selected>성인</option>
+    </select>
+    <p class="hint-text">선택에 따라 글자 크기와 설명 방식이 달라져요.</p>
+  </div>
+  <div class="panel">
+    <label class="field-label" for="api-key">Gemini API 키 (AI 코치용, 선택)</label>
+    <input type="password" id="api-key" placeholder="AI 코치를 쓰려면 API 키를 입력하세요" autocomplete="off">
+    <div class="check-row">
+      <input type="checkbox" id="save-key">
+      <label for="save-key">이 브라우저에 키 저장</label>
+    </div>
+    <p class="hint-text">
+      🔒 이 키는 이 브라우저에만 저장되며 외부로 전송되지 않습니다. 공용 컴퓨터에서는 저장하지 마세요.<br>
+      키가 없어도 AI 코치 없이 모든 단계를 플레이할 수 있어요.
+    </p>
+  </div>
+  <button class="big" id="btn-start">학습 시작 ▶</button>
+</div>
+
+<div id="screen-levels" class="screen">
+  <div class="top-bar">
+    <h1 style="font-size:1.4em">단계 선택</h1>
+    <span id="progress-summary" class="hint-text"></span>
+    <span class="spacer"></span>
+    <button class="secondary" id="btn-settings">⚙ 설정</button>
+  </div>
+
+  <div class="panel">
+    <b>⚽ 지금 바로 슛 연습하고 싶나요?</b>
+    <p class="hint-text">단계와 상관없이 원하는 연산으로 자유롭게 연습할 수 있어요. 별점과 진행 기록에는 반영되지 않아요.</p>
+    <div class="controls" style="margin-top:10px">
+      <select id="freeplay-op" style="max-width:160px">
+        <option value="add">➕ 더하기</option>
+        <option value="sub">➖ 빼기</option>
+        <option value="mul">✖️ 곱하기</option>
+        <option value="div">➗ 나누기</option>
+        <option value="mixed" selected>🔀 섞어서</option>
+      </select>
+      <select id="freeplay-digits" style="max-width:170px">
+        <option value="1">한 자리 수</option>
+        <option value="2" selected>두 자리 수</option>
+        <option value="3">세 자리 수</option>
+        <option value="4">네 자리 수</option>
+      </select>
+    </div>
+    <div class="controls" style="margin-top:10px">
+      <button class="blue" id="btn-freeplay">⚽ 슛 연습 시작</button>
+    </div>
+    <div class="controls" style="margin-top:10px; align-items:center">
+      <label for="jump-level" style="font-weight:700; align-self:center">원하는 단계로 바로 이동:</label>
+      <input type="number" id="jump-level" min="1" max="100" value="1" style="max-width:90px">
+      <button class="secondary" id="btn-jump-level" style="flex:0 0 auto">이동</button>
+    </div>
+  </div>
+
+  <div id="tier-list"></div>
+</div>
+
+<div id="screen-play" class="screen">
+  <div class="top-bar">
+    <button class="secondary" id="btn-quit">← 나가기</button>
+    <h2 id="play-title" style="margin:0"></h2>
+    <span class="spacer"></span>
+    <button class="secondary" id="btn-sound" style="min-height:36px; padding:4px 12px">🔊</button>
+    <span id="play-coach-level" class="hint-text"></span>
+  </div>
+  <div class="play-wrap">
+    <div class="field-col">
+      <div class="goal-box">
+        <span class="goal-title">🎯 목표: </span><span id="goal-text"></span>
+      </div>
+      <div class="scoreboard">
+        <span><span class="team">우리팀</span><span id="score-us">0</span></span>
+        <span class="vs">:</span>
+        <span><span class="team">상대팀</span><span id="score-them">0</span></span>
+      </div>
+      <div id="pitch">
+        <div id="goal-frame"></div>
+        <div id="keeper">🧤</div>
+        <div id="call-flash"></div>
+        <div id="ball">⚽</div>
+      </div>
+      <div class="problem-box">
+        <div id="problem-text">?</div>
+        <div class="answer-row">
+          <input type="text" id="answer-input" inputmode="numeric" autocomplete="off" placeholder="?">
+          <button class="blue" id="btn-shoot">⚽ 슛!</button>
+        </div>
+        <div class="keypad" id="keypad"></div>
+      </div>
+      <div class="status-line">
+        <span>문제: <b id="st-progress">0/0</b></span>
+        <span>정답: <b id="st-correct">0</b></span>
+        <button class="secondary" id="btn-hint" style="display:none; min-height:32px; padding:4px 14px">💡 힌트</button>
+      </div>
+    </div>
+    <div class="side-col">
+      <div class="coach-box">
+        <div class="coach-head">🧑‍🏫 AI 코치 <span class="badge" id="coach-badge"></span></div>
+        <div id="coach-messages"></div>
+      </div>
+      <div class="panel" style="margin:0">
+        <b>📖 이번 단계 개념</b>
+        <p id="concept-text" style="margin-top:6px; line-height:1.6"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="screen-result" class="screen">
+  <div class="panel result-card">
+    <div class="result-title" id="result-title"></div>
+    <div class="result-stars" id="result-stars"></div>
+    <p class="result-msg" id="result-msg"></p>
+    <div id="result-coach" style="max-width:520px;margin:0 auto 20px;text-align:left"></div>
+    <div class="result-btns">
+      <button class="secondary" id="btn-retry">🔄 다시 도전</button>
+      <button class="secondary" id="btn-to-levels">📋 단계 목록</button>
+      <button id="btn-next" class="big">다음 단계 ▶</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ═══ § A. 게임 독립 계층 (바둑/장기/체스 마스터와 동일) ═══ */
+
+const AGE_GROUPS = [
+  { id: 0, name: "유아",        promptDesc: "5~7세 유아. 아주 쉬운 단어와 이모지를 써서" },
+  { id: 1, name: "초등 저학년", promptDesc: "초등학교 1~3학년 어린이. 쉬운 단어로 재미있게" },
+  { id: 2, name: "초등 고학년", promptDesc: "초등학교 4~6학년 어린이. 친근하고 명확하게" },
+  { id: 3, name: "중학생 이상", promptDesc: "중고등학생. 또래 멘토처럼 편하게" },
+  { id: 4, name: "성인",        promptDesc: "성인 학습자. 표준적인 존댓말로 간결하게" },
+];
+
+const STORE = { progress: "soccerMathMaster.progress", apiKey: "soccerMathMaster.apiKey", age: "soccerMathMaster.age" };
+
+const Progress = {
+  data: {},
+  load() { try { this.data = JSON.parse(localStorage.getItem(STORE.progress) || "{}"); } catch (e) { this.data = {}; } },
+  save() { try { localStorage.setItem(STORE.progress, JSON.stringify(this.data)); } catch (e) {} },
+  stars(lv) { return this.data[lv] || 0; },
+  setStars(lv, s) { if (s > this.stars(lv)) { this.data[lv] = s; this.save(); } },
+  isUnlocked(lv) { return lv === 1 || this.stars(lv - 1) > 0; },
+  clearedCount() { return Object.keys(this.data).length; },
+};
+
+function makeRng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const randInt = (rng, a, b) => a + Math.floor(rng() * (b - a + 1));
+
+function intensityForLevel(lv) {
+  if (lv <= 20) return 5;
+  if (lv <= 40) return 4;
+  if (lv <= 60) return 3;
+  if (lv <= 80) return 2;
+  return 1;
+}
+const COACH_LABELS = { 5: "많음", 4: "보통", 3: "적음", 2: "최소", 1: "없음" };
+
+const GEMINI_ENDPOINT =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=";
+
+async function callGemini(apiKey, systemText, userText) {
+  const res = await fetch(GEMINI_ENDPOINT + encodeURIComponent(apiKey), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: systemText }] },
+      contents: [{ role: "user", parts: [{ text: userText }] }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 300 },
+    }),
+  });
+  if (!res.ok) {
+    let msg = "HTTP " + res.status;
+    try { const j = await res.json(); if (j.error && j.error.message) msg = j.error.message; } catch (e) {}
+    const err = new Error(msg); err.status = res.status; throw err;
+  }
+  const data = await res.json();
+  const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+  if (!parts || !parts.length) throw new Error("응답이 비어 있어요");
+  return parts.map((p) => p.text || "").join("").trim();
+}
+
+/* ═══ 효과음 (외부 음원 없이 Web Audio API로 즉석 생성, 게임 독립적) ═══ */
+const SoundFX = {
+  ctx: null, muted: false,
+  init() { this.muted = localStorage.getItem("soccerMathMaster.muted") === "1"; },
+  ensureCtx() {
+    if (this.muted) return null;
+    if (!this.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      this.ctx = new AC();
+    }
+    if (this.ctx.state === "suspended") this.ctx.resume();
+    return this.ctx;
+  },
+  tone(freq, duration, type, gainStart, delay) {
+    const ctx = this.ensureCtx();
+    if (!ctx) return;
+    const t0 = ctx.currentTime + (delay || 0);
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type || "sine";
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(gainStart || 0.15, t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.02);
+  },
+  whistle() { this.tone(1500, 0.28, "square", 0.1); },
+  goal() {
+    this.tone(523.25, 0.12, "sine", 0.17);
+    this.tone(659.25, 0.12, "sine", 0.17, 0.1);
+    this.tone(783.99, 0.12, "sine", 0.17, 0.2);
+    this.tone(1046.5, 0.22, "sine", 0.19, 0.3);
+  },
+  miss() { this.tone(180, 0.22, "sawtooth", 0.13); this.tone(120, 0.26, "sawtooth", 0.1, 0.08); },
+  click() { this.tone(600, 0.05, "triangle", 0.12); },
+  clear() {
+    this.tone(523.25, 0.14, "sine", 0.16);
+    this.tone(659.25, 0.14, "sine", 0.16, 0.12);
+    this.tone(783.99, 0.22, "sine", 0.18, 0.24);
+  },
+  fail() { this.tone(330, 0.18, "sine", 0.13); this.tone(247, 0.26, "sine", 0.13, 0.15); },
+  toggleMute() {
+    this.muted = !this.muted;
+    localStorage.setItem("soccerMathMaster.muted", this.muted ? "1" : "0");
+    return this.muted;
+  },
+};
+SoundFX.init();
+
+/* ═══ § B. 사칙연산 문제 생성 (게임 종속 계층) ═══ */
+
+function hasCarry(a, b) {
+  a = Math.abs(a); b = Math.abs(b);
+  let carry = 0;
+  while (a > 0 || b > 0) {
+    const s = (a % 10) + (b % 10) + carry;
+    carry = s >= 10 ? 1 : 0;
+    if (carry) return true;
+    a = Math.floor(a / 10); b = Math.floor(b / 10);
+  }
+  return false;
+}
+function borrowCount(a, b) {
+  let count = 0;
+  while (a > 0 || b > 0) {
+    if ((a % 10) < (b % 10)) count++;
+    a = Math.floor(a / 10); b = Math.floor(b / 10);
+  }
+  return count;
+}
+function digitRange(digits) {
+  const min = digits <= 1 ? 1 : Math.pow(10, digits - 1);
+  const max = Math.pow(10, digits) - 1;
+  return [min, max];
+}
+function makeAddProblem(rng, digits, forceCarryChance) {
+  const [min, max] = digitRange(digits);
+  let a = min, b = min;
+  for (let tries = 0; tries < 25; tries++) {
+    a = randInt(rng, min, max); b = randInt(rng, min, max);
+    const want = rng() < (forceCarryChance || 0);
+    if (!want || hasCarry(a, b)) break;
+  }
+  return { op: "add", a, b, answer: a + b, text: `${a} + ${b} = ?` };
+}
+function makeSubProblem(rng, digits, forceBorrowChance, minBorrows) {
+  const [min, max] = digitRange(digits);
+  let a = min, b = 0;
+  for (let tries = 0; tries < 40; tries++) {
+    a = randInt(rng, min, max);
+    b = randInt(rng, digits <= 1 ? 0 : min, a);
+    const want = rng() < (forceBorrowChance || 0);
+    if (!want || borrowCount(a, b) >= (minBorrows || 1)) break;
+  }
+  return { op: "sub", a, b, answer: a - b, text: `${a} - ${b} = ?` };
+}
+function makeMulProblem(rng, aMin, aMax, bMin, bMax) {
+  const a = randInt(rng, aMin, aMax), b = randInt(rng, bMin, bMax);
+  return { op: "mul", a, b, answer: a * b, text: `${a} × ${b} = ?` };
+}
+function makeDivProblem(rng, divMin, divMax, quotMin, quotMax) {
+  const b = randInt(rng, divMin, divMax), q = randInt(rng, quotMin, quotMax);
+  const a = b * q;
+  return { op: "div", a, b, answer: q, text: `${a} ÷ ${b} = ?` };
+}
+function makeMixedProblem(rng, digits) {
+  const kind = randInt(rng, 0, 3);
+  if (kind === 0) return makeAddProblem(rng, digits, 0.5);
+  if (kind === 1) return makeSubProblem(rng, digits, 0.5, 1);
+  if (kind === 2) return makeMulProblem(rng, 2, Math.min(99, 9 * Math.pow(10, Math.max(0, digits - 2))), 2, 9);
+  return makeDivProblem(rng, 2, 9, 2, 9);
+}
+
+/* ═══ § C. 레벨 데이터 & 절차적 생성 ═══ */
+
+const TIER_CONFIG = [
+  { tier: 1, concept: "한 자리 더하기" },
+  { tier: 2, concept: "한 자리 빼기" },
+  { tier: 3, concept: "두 자리 더하기" },
+  { tier: 4, concept: "두 자리 빼기" },
+  { tier: 5, concept: "세 자리 더하기와 빼기" },
+  { tier: 6, concept: "네 자리 빼기" },
+  { tier: 7, concept: "구구단(곱하기) 기초" },
+  { tier: 8, concept: "두 자리 곱하기" },
+  { tier: 9, concept: "나누기 기초" },
+  { tier: 10, concept: "종합 실전 (사칙연산 총정리)" },
+];
+
+const TIER_TEXT = {
+  1: { std: "한 자리 수끼리 더하는 연습이에요. 합이 10이 넘으면 받아올림을 해요.",
+       kid: "한 자리 숫자끼리 더해요 ➕ 합이 10보다 크면 윗자리로 하나 올려줘요!" },
+  2: { std: "한 자리 수끼리 빼는 연습이에요. 결과가 0보다 작아지지 않도록 큰 수에서 작은 수를 빼요.",
+       kid: "한 자리 숫자끼리 빼요 ➖ 큰 수에서 작은 수를 빼면 돼요!" },
+  3: { std: "두 자리 수끼리 더하는 연습이에요. 일의 자리 합이 10이 넘으면 십의 자리로 받아올림해요.",
+       kid: "두 자리 숫자끼리 더해요! 일의 자리를 먼저 더하고, 10이 넘으면 받아올림해요 😊" },
+  4: { std: "두 자리 수끼리 빼는 연습이에요. 일의 자리를 뺄 수 없을 때는 십의 자리에서 받아내림해요.",
+       kid: "두 자리 숫자끼리 빼요! 뺄 수 없으면 옆자리에서 10을 빌려와요 🔄" },
+  5: { std: "세 자리 수의 덧셈과 뺄셈을 함께 연습해요. 자리마다 차근차근 계산해 보세요.",
+       kid: "세 자리 숫자로 더하기 빼기를 해봐요! 한 자리씩 차근차근 😊" },
+  6: { std: "네 자리 수끼리 빼는 연습이에요. 여러 자리에서 받아내림이 필요할 수 있어요.",
+       kid: "네 자리 숫자 빼기예요! 여러 번 옆자리에서 빌려올 수도 있어요, 천천히 해봐요 🧮" },
+  7: { std: "구구단(곱셈구구)을 연습해요. 한 자리 수끼리 곱하는 기본기를 다져요.",
+       kid: "구구단 연습이에요! 한 자리 숫자끼리 곱해봐요 ✖️" },
+  8: { std: "두 자리 수와 한 자리 수를 곱하는 연습이에요. 구구단을 활용해 보세요.",
+       kid: "두 자리 숫자에 한 자리 숫자를 곱해요! 구구단을 잘 활용해봐요 💪" },
+  9: { std: "나눗셈의 기초를 연습해요. 나머지 없이 딱 나누어떨어지는 문제로 시작해요.",
+       kid: "나누기 연습이에요! 딱 나누어떨어지는 쉬운 문제부터 해봐요 ➗" },
+  10:{ std: "지금까지 배운 더하기·빼기·곱하기·나누기를 모두 섞어서 실전처럼 연습해요.",
+       kid: "배운 걸 다 섞어서 진짜 시합처럼 풀어봐요! 월드컵 결승전이에요 🏆" },
+};
+
+function genProblemForTier(tier, d, rng) {
+  switch (tier) {
+    case 1: return makeAddProblem(rng, 1, 0.15 + d * 0.07);
+    case 2: return makeSubProblem(rng, 1, 0, 0);
+    case 3: return makeAddProblem(rng, 2, 0.1 + d * 0.08);
+    case 4: return makeSubProblem(rng, 2, 0.1 + d * 0.08, 1);
+    case 5: return rng() < 0.5 ? makeAddProblem(rng, 3, 0.5) : makeSubProblem(rng, 3, 0.5, 1);
+    case 6: return makeSubProblem(rng, 4, 0.35 + d * 0.06, d >= 6 ? 2 : 1);
+    case 7: { const top = Math.min(9, 3 + Math.ceil(d * 0.7)); return makeMulProblem(rng, 1, top, 1, top); }
+    case 8: { const top = Math.min(99, 15 + d * 9); return makeMulProblem(rng, 10, top, 2, Math.min(9, 3 + Math.floor(d / 2))); }
+    case 9: { const top = Math.min(9, 3 + Math.ceil(d * 0.7)); return makeDivProblem(rng, 2, top, 2, top); }
+    case 10: return makeMixedProblem(rng, 2 + Math.floor(d / 4));
+  }
+  return makeAddProblem(rng, 1, 0);
+}
+
+function makeLevel(lv) {
+  const tierIdx = Math.floor((lv - 1) / 10);
+  const cfg = TIER_CONFIG[tierIdx];
+  const d = ((lv - 1) % 10) + 1;
+  const rng = makeRng(lv * 1013904223 + 321);
+  const problemCount = 5 + Math.floor(d / 3);
+  const problems = [];
+  for (let i = 0; i < problemCount; i++) problems.push(genProblemForTier(cfg.tier, d, rng));
+  return {
+    level: lv, tier: cfg.tier, tierName: cfg.concept, difficulty: d,
+    intensity: intensityForLevel(lv), conceptText: TIER_TEXT[cfg.tier],
+    problems,
+    goalText: `${problemCount}개의 문제를 풀어 슛을 성공시키세요! 정답률 60% 이상이면 승리로 기록돼요.`,
+  };
+}
+
+const OP_LABEL = { add: "더하기", sub: "빼기", mul: "곱하기", div: "나누기", mixed: "섞어서" };
+function makeFreeplayLevel(op, digits) {
+  const opKey = op || "mixed";
+  const dg = Math.max(1, Math.min(4, digits || 2));
+  const rng = makeRng(Date.now() % 2147483647);
+  const problemCount = 10;
+  const problems = [];
+  for (let i = 0; i < problemCount; i++) {
+    let p;
+    if (opKey === "add") p = makeAddProblem(rng, dg, 0.5);
+    else if (opKey === "sub") p = makeSubProblem(rng, dg, 0.5, 1);
+    else if (opKey === "mul") p = makeMulProblem(rng, dg <= 1 ? 1 : Math.pow(10, dg - 1), Math.pow(10, dg) - 1, 2, 9);
+    else if (opKey === "div") p = makeDivProblem(rng, 2, 9, 2, Math.pow(10, Math.min(2, dg)) - 1 || 9);
+    else p = makeMixedProblem(rng, dg);
+    problems.push(p);
+  }
+  const label = `자유 연습 · ${OP_LABEL[opKey]} · ${dg}자리 수`;
+  return {
+    level: "free", tier: 0, tierName: label, difficulty: 0, intensity: 3,
+    conceptText: {
+      std: `${OP_LABEL[opKey]} 연산을 ${dg}자리 수로 자유롭게 연습해 보세요.`,
+      kid: `${OP_LABEL[opKey]}를 마음껏 연습해봐요! 틀려도 괜찮아요 😊`,
+    },
+    problems,
+    goalText: `${problemCount}개의 문제를 풀어보세요. 정답률 60% 이상이면 승리로 기록돼요.`,
+  };
+}
+
+/* ═══ § D. 앱 상태 & UI ═══ */
+
+const $ = (id) => document.getElementById(id);
+const App = {
+  ageIdx: 4, apiKey: "", level: null, problemIndex: 0, correctCount: 0,
+  scoreUs: 0, scoreThem: 0, busy: false, finished: false,
+  coachBusy: false, lastAutoCoach: 0, freeplayOp: "mixed", freeplayDigits: 2,
+};
+function kidMode() { return App.ageIdx <= 1; }
+function TXT(std, kid) { return kidMode() ? kid : std; }
+
+function showScreen(id) {
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  $(id).classList.add("active");
+  window.scrollTo(0, 0);
+}
+let toastTimer = null;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function initStartScreen() {
+  Progress.load();
+  const savedAge = localStorage.getItem(STORE.age);
+  if (savedAge !== null) $("age-select").value = savedAge;
+  const savedKey = localStorage.getItem(STORE.apiKey);
+  if (savedKey) { $("api-key").value = savedKey; $("save-key").checked = true; }
+  applyAge(parseInt($("age-select").value, 10));
+  $("age-select").addEventListener("change", () => applyAge(parseInt($("age-select").value, 10)));
+  $("btn-start").addEventListener("click", () => {
+    App.ageIdx = parseInt($("age-select").value, 10);
+    App.apiKey = $("api-key").value.trim();
+    localStorage.setItem(STORE.age, String(App.ageIdx));
+    if ($("save-key").checked && App.apiKey) localStorage.setItem(STORE.apiKey, App.apiKey);
+    else localStorage.removeItem(STORE.apiKey);
+    renderLevelSelect();
+    showScreen("screen-levels");
+  });
+  $("btn-settings").addEventListener("click", () => showScreen("screen-start"));
+  $("btn-freeplay").addEventListener("click", () => {
+    startFreePlay($("freeplay-op").value, parseInt($("freeplay-digits").value, 10));
+  });
+  $("btn-jump-level").addEventListener("click", () => {
+    const n = parseInt($("jump-level").value, 10);
+    if (!n || n < 1 || n > 100) { toast(TXT("1~100 사이의 단계 번호를 입력하세요.", "1부터 100 사이 숫자를 넣어주세요!")); return; }
+    startLevel(n);
+  });
+}
+function applyAge(idx) { App.ageIdx = idx; document.body.className = "age-" + idx; }
+
+function renderLevelSelect() {
+  const wrap = $("tier-list");
+  wrap.innerHTML = "";
+  const cleared = Progress.clearedCount();
+  $("progress-summary").textContent = cleared > 0 ? `지금까지 ${cleared}단계 완료! 🎉` : "";
+  for (const cfg of TIER_CONFIG) {
+    const block = document.createElement("div");
+    block.className = "tier-block";
+    const startLv = (cfg.tier - 1) * 10 + 1;
+    const inten = intensityForLevel(startLv);
+    block.innerHTML = `
+      <div class="tier-head">
+        <span class="tier-num">티어 ${cfg.tier}</span>
+        <span>${cfg.concept}</span>
+        <span class="tier-coach">AI 도움: ${COACH_LABELS[inten]}</span>
+      </div>`;
+    const grid = document.createElement("div");
+    grid.className = "level-grid";
+    for (let i = 0; i < 10; i++) {
+      const lv = startLv + i;
+      const unlocked = Progress.isUnlocked(lv);
+      const stars = Progress.stars(lv);
+      const card = document.createElement("div");
+      card.className = "level-card" + (unlocked ? "" : " locked");
+      card.innerHTML = `
+        <div class="lv-num">${unlocked ? lv + "단계" : "🔒 " + lv}</div>
+        <div class="lv-stars">${"★".repeat(stars)}${"☆".repeat(Math.max(0, 3 - stars))}</div>
+        <div class="lv-coach">도움 ${COACH_LABELS[intensityForLevel(lv)]}</div>`;
+      if (unlocked) card.addEventListener("click", () => startLevel(lv));
+      else card.addEventListener("click", () => toast(TXT("이전 단계를 먼저 완료하세요!", "앞 단계를 먼저 깨야 열려요! 🔑")));
+      grid.appendChild(card);
+    }
+    block.appendChild(grid);
+    wrap.appendChild(block);
+  }
+}
+
+function startLevel(lv) { enterLevel(makeLevel(lv)); }
+function startFreePlay(op, digits) {
+  App.freeplayOp = op || App.freeplayOp || "mixed";
+  App.freeplayDigits = digits || App.freeplayDigits || 2;
+  enterLevel(makeFreeplayLevel(App.freeplayOp, App.freeplayDigits));
+}
+function replayCurrentLevel() {
+  if (!App.level) return;
+  if (App.level.level === "free") startFreePlay(App.freeplayOp, App.freeplayDigits);
+  else startLevel(App.level.level);
+}
+
+function enterLevel(level) {
+  const lv = level.level;
+  App.level = level;
+  App.problemIndex = 0; App.correctCount = 0; App.scoreUs = 0; App.scoreThem = 0;
+  App.busy = false; App.finished = false; App.lastAutoCoach = 0;
+
+  $("play-title").textContent = lv === "free" ? `⚽ ${level.tierName}` : `${lv}단계 · ${level.tierName}`;
+  $("play-coach-level").textContent = `AI 도움: ${COACH_LABELS[level.intensity]}`;
+  $("goal-text").textContent = level.goalText;
+  $("concept-text").textContent = kidMode() ? level.conceptText.kid : level.conceptText.std;
+  $("coach-badge").textContent = "도움 " + COACH_LABELS[level.intensity];
+  $("coach-messages").innerHTML = "";
+  $("btn-hint").style.display = level.intensity === 3 ? "" : "none";
+  $("score-us").textContent = "0"; $("score-them").textContent = "0";
+
+  const intro = {
+    5: TXT("매 문제마다 내가 도와줄게요. 편하게 슛 해보세요!", "선생님이 옆에서 다 도와줄게요! 걱정 말고 슛 해보세요 😊"),
+    4: TXT("틀렸을 때만 알려 드릴게요. 스스로 생각해 보세요.", "틀리면 살짝 알려 줄게요. 먼저 혼자 해 봐요! 💪"),
+    3: TXT("도움이 필요하면 힌트 버튼을 눌러 주세요.", "막히면 💡힌트 버튼을 눌러요!"),
+    2: TXT("이번엔 경기가 끝난 뒤에 총평만 해 드릴게요. 혼자 힘으로!", "다 끝나면 선생님이 이야기해 줄게요. 혼자 해 보자! 🌟"),
+    1: TXT("이제 코치 없이 실력을 보여줄 시간이에요!", "이제 진짜 선수처럼 혼자 슛 하는 거예요! 🏆"),
+  }[level.intensity];
+  addBubble(intro, "sys");
+  if (!App.apiKey && level.intensity >= 2 && level.intensity <= 5) {
+    addBubble(TXT("(API 키가 없어 AI 코멘트는 쉬어요. 게임은 그대로 즐길 수 있어요!)",
+                  "(지금은 코치 선생님이 잠깐 자리를 비웠어요. 그래도 게임은 할 수 있어요!)"), "sys");
+  }
+  SoundFX.whistle();
+  showScreen("screen-play");
+  renderKeypad();
+  loadProblem();
+}
+
+function renderKeypad() {
+  const kp = $("keypad");
+  kp.innerHTML = "";
+  const layout = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "✓"];
+  for (const k of layout) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = k;
+    btn.addEventListener("click", () => onKeypadPress(k));
+    kp.appendChild(btn);
+  }
+}
+function onKeypadPress(k) {
+  const input = $("answer-input");
+  if (k === "⌫") input.value = input.value.slice(0, -1);
+  else if (k === "✓") shootAnswer();
+  else {
+    if (input.value.length >= 6) return;
+    if (input.value === "0") input.value = k;
+    else input.value += k;
+  }
+  input.focus();
+}
+
+function loadProblem() {
+  const L = App.level;
+  const p = L.problems[App.problemIndex];
+  $("problem-text").textContent = p.text;
+  $("answer-input").value = "";
+  $("answer-input").focus();
+  $("st-progress").textContent = `${App.problemIndex + 1}/${L.problems.length}`;
+  $("st-correct").textContent = App.correctCount;
+  const ball = $("ball");
+  ball.className = "";
+  const keeper = $("keeper");
+  keeper.style.transform = `translate(-50%, 0)`;
+}
+
+$("answer-input").addEventListener("keydown", (ev) => { if (ev.key === "Enter") shootAnswer(); });
+$("btn-shoot").addEventListener("click", () => shootAnswer());
+
+async function shootAnswer() {
+  if (App.busy || App.finished || !App.level) return;
+  const L = App.level;
+  const p = L.problems[App.problemIndex];
+  const raw = $("answer-input").value.trim();
+  if (raw === "") { toast(TXT("답을 입력해 주세요!", "답을 써주세요!")); return; }
+  const val = parseInt(raw, 10);
+  if (Number.isNaN(val)) { toast(TXT("숫자를 입력해 주세요!", "숫자로 써주세요!")); return; }
+
+  App.busy = true;
+  const correct = val === p.answer;
+  const ball = $("ball"), flash = $("call-flash"), keeper = $("keeper");
+
+  if (correct) {
+    App.correctCount++; App.scoreUs++;
+    $("score-us").textContent = App.scoreUs;
+    ball.className = "fly-goal";
+    keeper.style.transform = "translate(-80%, 0)";
+    flash.textContent = TXT("GOAL!", "골인! 🎉");
+    flash.className = "show goal";
+    SoundFX.goal();
+  } else {
+    App.scoreThem++;
+    $("score-them").textContent = App.scoreThem;
+    ball.className = "fly-miss";
+    flash.textContent = TXT(`아쉬워요! 정답은 ${p.answer}`, `아깝다! 정답은 ${p.answer}`);
+    flash.className = "show miss";
+    SoundFX.miss();
+  }
+  $("st-correct").textContent = App.correctCount;
+
+  if (L.intensity === 5) coachComment("auto", { problem: p, correct });
+  else if (L.intensity === 4 && !correct) coachComment("mistake", { problem: p, correct });
+
+  await new Promise((r) => setTimeout(r, 900));
+  flash.classList.remove("show");
+
+  App.problemIndex++;
+  if (App.problemIndex >= L.problems.length) { App.busy = false; finishMatch(); return; }
+  loadProblem();
+  App.busy = false;
+}
+
+function finishMatch() {
+  if (App.finished) return;
+  App.finished = true;
+  const L = App.level;
+  const total = L.problems.length;
+  const accuracy = total ? App.correctCount / total : 0;
+  const cleared = accuracy >= 0.6;
+  const stars = !cleared ? 0 : accuracy >= 0.999 ? 3 : accuracy >= 0.8 ? 2 : 1;
+  if (cleared && typeof L.level === "number") Progress.setStars(L.level, stars);
+  if (cleared) SoundFX.clear(); else SoundFX.fail();
+
+  const scoreLine = `${App.scoreUs} : ${App.scoreThem}`;
+  $("result-title").textContent = cleared
+    ? TXT(`🎉 승리! ${scoreLine}`, `🎉 이겼어요! ${scoreLine}`)
+    : TXT(`아깝다, 다시 도전해볼까요? ${scoreLine}`, `아쉬워요! 다시 해봐요 💪 ${scoreLine}`);
+  $("result-stars").textContent = cleared ? "★".repeat(stars) + "☆".repeat(3 - stars) : "☆☆☆";
+
+  const pct = Math.round(accuracy * 100);
+  let msg = cleared
+    ? {
+        3: TXT("완벽해요! 전 문제를 다 맞혔어요.", "우와, 다 맞혔어요! 최고예요 🌟🌟🌟"),
+        2: TXT("잘했어요! 조금만 더 다듬으면 만점도 가능해요.", "잘했어요! 다음엔 다 맞혀봐요 ⭐"),
+        1: TXT("승리했어요! 다시 도전하면 더 잘할 수 있어요.", "이겼어요! 또 하면 더 잘할 수 있어요 ⭐"),
+      }[stars]
+    : TXT("천천히 다시 생각해 보면 분명 더 잘할 수 있어요!", "괜찮아요, 다시 하면 꼭 잘할 수 있어요! 😊");
+  msg += ` (${TXT("정답률", "맞힌 비율")} ${pct}%)`;
+  $("result-msg").textContent = msg;
+  $("result-coach").innerHTML = "";
+  const hasNext = cleared && L.level < 100;
+  $("btn-next").style.display = hasNext ? "" : "none";
+  if (L.intensity === 2 || (L.intensity >= 3 && cleared)) coachComment("summary", { cleared, stars, target: "result" });
+  showScreen("screen-result");
+}
+
+$("btn-quit").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
+$("btn-hint").addEventListener("click", () => coachComment("hint", {}));
+$("btn-retry").addEventListener("click", replayCurrentLevel);
+$("btn-to-levels").addEventListener("click", () => { renderLevelSelect(); showScreen("screen-levels"); });
+$("btn-next").addEventListener("click", () => startLevel(App.level.level + 1));
+function updateSoundButton() { $("btn-sound").textContent = SoundFX.muted ? "🔇" : "🔊"; }
+updateSoundButton();
+$("btn-sound").addEventListener("click", () => { SoundFX.toggleMute(); updateSoundButton(); if (!SoundFX.muted) SoundFX.click(); });
+
+/* ═══ § E. AI 코치 ═══ */
+
+function addBubble(text, cls, target) {
+  const box = target === "result" ? $("result-coach") : $("coach-messages");
+  const div = document.createElement("div");
+  div.className = "bubble" + (cls ? " " + cls : "");
+  div.textContent = text;
+  box.appendChild(div);
+  while (box.children.length > 6) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+const COACH_KIND_INSTRUCTION = {
+  auto: "학습자가 방금 문제를 풀었습니다. 이 계산이 왜 그렇게 되는지, 또는 더 빠르게 계산하는 방법을 짧게 알려 주세요.",
+  mistake: "학습자가 방금 문제를 틀렸습니다. 왜 틀렸을지 부드럽게 짚어주고 다시 도전하도록 격려해 주세요.",
+  hint: "학습자가 힌트를 요청했습니다. 정답을 직접 말하지 말고, 어떻게 계산을 시작하면 좋을지 방향만 알려 주세요.",
+  summary: "경기가 끝났습니다. 이번 경기 전체에 대한 짧은 총평과 격려를 해 주세요.",
+};
+async function coachComment(kind, extra) {
+  const L = App.level;
+  if (!L || L.intensity === 1) return;
+  if (!App.apiKey) return;
+  if (App.coachBusy) return;
+  if (kind === "auto") {
+    const now = Date.now();
+    if (now - App.lastAutoCoach < 4000) return;
+    App.lastAutoCoach = now;
+  }
+  App.coachBusy = true;
+  const target = extra && extra.target;
+  const loading = addBubble(TXT("코치가 생각 중이에요...", "선생님이 생각하고 있어요... 🤔"), "loading", target);
+  const age = AGE_GROUPS[App.ageIdx];
+  const systemText = `당신은 친절한 축구부 수학 코치입니다. ${age.promptDesc} 말해 주세요. ` +
+    `2~3문장 이내로 짧게 코멘트하세요. 정답을 직접 알려주지 말고 스스로 생각하도록 유도하는 질문을 섞으세요. 따뜻하게 격려하는 말투를 유지하세요.`;
+  const p = extra && extra.problem;
+  const userText = [
+    `[학습 개념] ${L.tierName} — ${L.conceptText.std}`,
+    `[이번 단계 목표] ${L.goalText}`,
+    `[상황] ${COACH_KIND_INSTRUCTION[kind]}`,
+    p ? `[문제] ${p.text} (정답: ${p.answer})` : "",
+    extra && typeof extra.correct === "boolean" ? `[결과] ${extra.correct ? "정답" : "오답"}` : "",
+    extra && typeof extra.cleared === "boolean" ? `[경기 결과] ${extra.cleared ? "승리, 별 " + extra.stars + "개" : "이번에는 패배"}` : "",
+  ].filter(Boolean).join("\n");
+  try {
+    const text = await callGemini(App.apiKey, systemText, userText);
+    loading.remove(); addBubble(text, "", target);
+  } catch (err) {
+    loading.remove();
+    let friendly;
+    if (err.status === 400 || err.status === 403) friendly = TXT("API 키가 올바르지 않은 것 같아요. 설정에서 키를 확인해 주세요. (게임은 계속할 수 있어요!)", "코치 열쇠(API 키)가 안 맞나 봐요. 그래도 게임은 계속할 수 있어요!");
+    else if (err.status === 429) friendly = TXT("코치가 잠시 바빠요. 조금 있다가 다시 시도해 주세요.", "선생님이 지금 너무 바빠요! 조금만 기다려 줘요 ⏳");
+    else friendly = TXT("코치와 연결이 잠시 끊겼어요. 네트워크를 확인해 주세요. (게임은 계속 진행돼요!)", "선생님이랑 연결이 잠깐 끊겼어요. 게임은 계속할 수 있어요!");
+    addBubble(friendly, "err", target);
+  } finally { App.coachBusy = false; }
+}
+
+initStartScreen();
+</script>
+</body>
+</html>
