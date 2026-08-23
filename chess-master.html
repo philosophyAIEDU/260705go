@@ -666,10 +666,11 @@ function makeLevel(lv) {
         L.goal = { type: "capture", target: tgt, moveLimit: 2 + Math.floor(d / 4) };
         L.goalText = "▲ 표시된 상대 폰을 대각선으로 잡아보세요!";
       } else {
-        const px = randInt(rng, 0, 7);
+        let px = randInt(rng, 0, 7);
+        if (px === 4) px = 3; // 상대 킹(e8)과 승진 칸이 겹치지 않도록 보정
         const startY = Math.max(1, 6 - Math.floor(d / 2));
-        put(px, startY, WHITE, CT.PAWN);
-        L.goal = { type: "reach", squares: [[px, 7]], moveLimit: (7 - startY) + 1 };
+        const [ppx] = put(px, startY, WHITE, CT.PAWN);
+        L.goal = { type: "reach", squares: [[ppx, 7]], moveLimit: (7 - startY) + 1 };
         L.goalText = "폰을 8번째 줄까지 전진시켜 프로모션 해보세요!";
       }
       break;
