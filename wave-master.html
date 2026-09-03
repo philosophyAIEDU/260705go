@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<!--
+  파도 마스터 (Wave Master) — 건물을 먹으면 먹을수록 진화하는 파도 액션 게임
+  바둑/장기/체스/축구수학/영어 마스터와 동일한 아키텍처 관례(단일 HTML, 인라인 CSS/JS,
+  외부 라이브러리 없음, .screen/.screen.active 전환, localStorage 저장)를 재사용한다.
+  이 게임은 학습 퀴즈형이 아니라 캔버스 기반 실시간 액션 게임이다.
+
+  게임 규칙
+  - 파도는 화면 왼쪽에 고정되어 있고, 건물들이 오른쪽에서 계속 밀려온다.
+  - 스페이스바(또는 화면의 파도 높이기 버튼)를 누르고 있으면 파도가 순간적으로 높아진다.
+  - 파도 높이보다 낮은 건물은 자동으로 삼켜져 점수와 EXP를 얻는다.
+  - 파도보다 높은 건물에 부딪히면 체력이 줄어든다.
+  - EXP를 다 채우면 파도가 다음 단계로 진화하며 기본 높이가 영구적으로 커진다.
+  - 체력이 0이 되면 게임 종료.
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>파도 마스터 — 건물을 먹고 진화하는 파도 게임</title>
+<style>
+  :root {
+    --fs: 16px; --btn-h: 44px;
+    --ink: #0d2436; --paper: #eef6fb;
+    --accent: #1565c0; --accent-2: #00897b; --warn: #c62828;
+    --card: #ffffff; --shadow: 0 2px 8px rgba(0,0,0,.12);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { touch-action: manipulation; }
+  body {
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    font-size: var(--fs); background: linear-gradient(160deg, #eaf4fb, #d3e9f7);
+    color: var(--ink); min-height: 100vh;
+  }
+  .screen { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+  .screen.active { display: block; }
+  h1 { font-size: 1.9em; margin-bottom: .3em; }
+  h2 { font-size: 1.25em; margin: .6em 0 .4em; }
+  .subtitle { color: #3a5872; margin-bottom: 1.2em; line-height: 1.6; }
+
+  button {
+    font-family: inherit; font-size: 1em; cursor: pointer;
+    border: none; border-radius: 12px; min-height: var(--btn-h);
+    padding: 8px 20px; background: var(--accent); color: #fff;
+    box-shadow: var(--shadow); transition: transform .08s, filter .15s;
+    -webkit-user-select: none; user-select: none;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: scale(.97); }
+  button.secondary { background: #fff; color: var(--ink); border: 2px solid #bcd6ea; }
+  button.teal { background: var(--accent-2); }
+  button.big { font-size: 1.2em; padding: 14px 34px; }
+
+  .panel { background: var(--paper); border-radius: 16px; padding: 20px; box-shadow: var(--shadow); margin-bottom: 16px; }
+  .how-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .how-list li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.5; }
+  .how-list .ico { font-size: 1.3em; flex: none; }
+  .best-line { font-weight: 800; color: var(--accent); margin-bottom: 14px; }
+
+  .stage-roadmap { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; margin-top: 12px; }
+  .stage-chip {
+    flex: none; background: #fff; border-radius: 12px; padding: 8px 12px; text-align: center;
+    box-shadow: var(--shadow); min-width: 84px; font-size: .82em;
+  }
+  .stage-chip .n { font-weight: 800; color: var(--accent); font-size: .78em; }
+  .stage-chip .e { font-size: 1.4em; }
+
+  /* ---- game screen ---- */
+  .top-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px;
+  }
+  #stage-badge { font-weight: 800; font-size: 1.1em; background: #fff; border-radius: 999px; padding: 6px 16px; box-shadow: var(--shadow); }
+  .stat-pill { background: #fff; border-radius: 999px; padding: 6px 14px; box-shadow: var(--shadow); font-size: .9em; font-weight: 700; }
+  .stat-pill b { color: var(--accent); }
+  .top-bar .spacer { flex: 1; }
+
+  .bars-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+  .bar-block { flex: 1 1 220px; min-width: 180px; }
+  .bar-label { font-size: .78em; font-weight: 700; margin-bottom: 3px; display: flex; justify-content: space-between; }
+  .bar-track { background: #cfe0ec; border-radius: 999px; height: 14px; overflow: hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,.15); }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width .12s linear; }
+  #hp-fill { background: linear-gradient(90deg, #66bb6a, #43a047); }
+  #hp-fill.low { background: linear-gradient(90deg, #ef5350, #c62828); }
+  #exp-fill { background: linear-gradient(90deg, #ffca28, #ff8f00); }
+
+  .stage-wrap { position: relative; border-radius: 18px; overflow: hidden; box-shadow: var(--shadow); background: #0d2436; }
+  #game { display: block; width: 100%; height: auto; aspect-ratio: 900 / 500; touch-action: none; }
+  #evolve-banner {
+    position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(.7);
+    background: rgba(13,36,54,.88); color: #ffe082; font-weight: 900; font-size: 1.5em;
+    padding: 14px 26px; border-radius: 16px; opacity: 0; pointer-events: none; text-align: center;
+    transition: opacity .25s, transform .25s; white-space: nowrap; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+  }
+  #evolve-banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  #pause-overlay {
+    position: absolute; inset: 0; background: rgba(13,36,54,.72); color: #fff;
+    display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+    font-weight: 800; font-size: 1.4em; text-align: center;
+  }
+  #pause-overlay.show { display: flex; }
+
+  .controls-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  #btn-surge {
+    flex: 1 1 260px; background: var(--accent-2); font-size: 1.1em; font-weight: 800;
+    padding: 16px 20px; -webkit-touch-callout: none;
+  }
+  #btn-surge:active, #btn-surge.pressed { filter: brightness(1.15); transform: scale(.98); }
+  .energy-wrap { flex: 1 1 160px; min-width: 140px; }
+  .energy-wrap .bar-track { height: 10px; }
+  #energy-fill { background: linear-gradient(90deg, #4fc3f7, #0288d1); }
+  .side-btns { display: flex; gap: 8px; }
+
+  .result-card { text-align: center; padding: 30px 20px; }
+  .result-emoji { font-size: 3em; margin-bottom: 6px; }
+  .result-title { font-size: 1.7em; font-weight: 800; margin-bottom: 4px; }
+  .result-sub { color: #3a5872; margin-bottom: 18px; }
+  .result-stats { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-bottom: 22px; }
+  .result-stats .stat { background: var(--paper); border-radius: 14px; padding: 14px 20px; min-width: 120px; box-shadow: var(--shadow); }
+  .result-stats .stat .v { font-size: 1.5em; font-weight: 800; color: var(--accent); }
+  .result-stats .stat .k { font-size: .8em; color: #3a5872; }
+  .newrecord { display: inline-block; background: #fff3cd; color: #8a6d1a; border: 2px solid #f2c94c; border-radius: 999px; padding: 4px 16px; font-weight: 800; margin-bottom: 16px; }
+  .result-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: rgba(13,36,54,.92); color: #fff; padding: 10px 22px; border-radius: 999px;
+    font-size: .95em; opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 50;
+    max-width: 90vw; text-align: center;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div id="screen-start" class="screen active">
+  <h1>🌊 파도 마스터</h1>
+  <p class="subtitle">건물을 먹으면 먹을수록 파도가 점점 더 크고 강하게 진화해요!<br>얼마나 큰 파도까지 키울 수 있을까요?</p>
+
+  <div class="panel">
+    <div class="best-line">🏆 최고 기록: <span id="best-score-start">0</span>점</div>
+    <h2>게임 방법</h2>
+    <ul class="how-list">
+      <li><span class="ico">🌊</span><span>파도가 왼쪽에 자리잡고, 도시가 계속 오른쪽에서 밀려와요.</span></li>
+      <li><span class="ico">👉</span><span><b>스페이스바</b> 또는 <b>[파도 높이기]</b> 버튼을 누르고 있으면 파도가 순간적으로 높아져요.</span></li>
+      <li><span class="ico">🍽️</span><span>파도보다 낮은 건물은 자동으로 삼켜져서 점수와 EXP를 줘요.</span></li>
+      <li><span class="ico">💥</span><span>파도보다 높은 건물에 부딪히면 체력이 줄어들어요. 체력이 0이 되면 게임 종료!</span></li>
+      <li><span class="ico">✨</span><span>EXP 게이지를 가득 채우면 파도가 <b>진화</b>해요. 기본 높이가 영구히 커지고 체력도 회복돼요.</span></li>
+    </ul>
+    <div class="stage-roadmap" id="stage-roadmap"></div>
+  </div>
+
+  <div style="text-align:center">
+    <button class="big" id="btn-start">🌊 파도 타기 시작</button>
+  </div>
+</div>
+
+<div id="screen-game" class="screen">
+  <div class="top-bar">
+    <span id="stage-badge">💧 잔물결</span>
+    <span class="stat-pill">점수 <b id="score-val">0</b></span>
+    <span class="stat-pill">🍽️ <b id="eaten-val">0</b></span>
+    <span class="stat-pill">🏆 <b id="best-inline">0</b></span>
+    <span class="spacer"></span>
+    <div class="side-btns">
+      <button class="secondary" id="btn-pause">⏸ 일시정지</button>
+      <button class="secondary" id="btn-quit-game">← 나가기</button>
+    </div>
+  </div>
+
+  <div class="bars-row">
+    <div class="bar-block">
+      <div class="bar-label"><span>❤️ 체력</span><span id="hp-num">100</span></div>
+      <div class="bar-track"><div class="bar-fill" id="hp-fill" style="width:100%"></div></div>
+    </div>
+    <div class="bar-block">
+      <div class="bar-label"><span>✨ 다음 진화: <span id="next-stage-name">너울</span></span></div>
+      <div class="bar-track"><div class="bar-fill" id="exp-fill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="stage-wrap">
+    <canvas id="game" width="900" height="500"></canvas>
+    <div id="evolve-banner"></div>
+    <div id="pause-overlay"><div>⏸ 일시정지</div><button id="btn-resume">▶ 계속하기</button></div>
+  </div>
+
+  <div class="controls-row">
+    <button id="btn-surge">🌊 누르고 있기 (파도 높이기)</button>
+    <div class="energy-wrap">
+      <div class="bar-label"><span>⚡ 파워</span></div>
+      <div class="bar-track"><div class="bar-fill" id="energy-fill" style="width:100%"></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="screen-over" class="screen">
+  <div class="result-card">
+    <div class="result-emoji" id="result-emoji">🌊</div>
+    <div class="result-title" id="result-title">게임 종료!</div>
+    <div class="result-sub" id="result-sub">도달 단계: 잔물결</div>
+    <div id="new-record-badge" class="newrecord" style="display:none">🎉 신기록 달성!</div>
+    <div class="result-stats">
+      <div class="stat"><div class="v" id="res-score">0</div><div class="k">최종 점수</div></div>
+      <div class="stat"><div class="v" id="res-eaten">0</div><div class="k">먹은 건물 수</div></div>
+      <div class="stat"><div class="v" id="res-time">0초</div><div class="k">생존 시간</div></div>
+      <div class="stat"><div class="v" id="res-best">0</div><div class="k">최고 기록</div></div>
+    </div>
+    <div class="result-btns">
+      <button class="big" id="btn-retry">🔄 다시 도전</button>
+      <button class="secondary big" id="btn-to-title">← 처음으로</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ================= utilities ================= */
+  const $ = (id) => document.getElementById(id);
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  function showScreen(id) {
+    document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+    $(id).classList.add("active");
+  }
+
+  let toastTimer = null;
+  function toast(msg) {
+    const el = $("toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
+  }
+
+  const BEST_KEY = "waveMasterBest";
+  function getBest() { return parseInt(localStorage.getItem(BEST_KEY) || "0", 10) || 0; }
+  function setBest(v) { try { localStorage.setItem(BEST_KEY, String(v)); } catch (e) {} }
+
+  /* ================= evolution stages ================= */
+  const STAGES = [
+    { name: "잔물결",       emoji: "💧",     height: 42,  expToNext: 110 },
+    { name: "너울",         emoji: "🌊",     height: 64,  expToNext: 160 },
+    { name: "파도",         emoji: "🌊",     height: 90,  expToNext: 230 },
+    { name: "큰 파도",      emoji: "🌊🌊",   height: 120, expToNext: 320 },
+    { name: "높은 파도",    emoji: "🌊✨",   height: 155, expToNext: 430 },
+    { name: "폭풍 파도",    emoji: "🌪️🌊",  height: 195, expToNext: 560 },
+    { name: "해일",         emoji: "🌀",     height: 240, expToNext: 720 },
+    { name: "쓰나미",       emoji: "🌊⚡",   height: 290, expToNext: 900 },
+    { name: "메가 쓰나미",  emoji: "⚡🌊⚡", height: 345, expToNext: 1100 },
+    { name: "전설의 파도",  emoji: "👑🌊",   height: 400, expToNext: 300 }, // 최고단계 도달 후엔 보너스 임계값
+  ];
+  const MAX_STAGE = STAGES.length - 1;
+
+  /* ================= building tiers (색상/이름) ================= */
+  const TIERS = [
+    { max: 70,       color: "#8d6e63", roof: "#5d4037", label: "초가집" },
+    { max: 110,      color: "#78909c", roof: "#455a64", label: "상가" },
+    { max: 160,      color: "#5c6bc0", roof: "#3949ab", label: "빌라" },
+    { max: 220,      color: "#42a5f5", roof: "#1565c0", label: "아파트" },
+    { max: 300,      color: "#26a69a", roof: "#00695c", label: "오피스빌딩" },
+    { max: 390,      color: "#ec407a", roof: "#ad1457", label: "고층빌딩" },
+    { max: Infinity, color: "#ffca28", roof: "#ff8f00", label: "랜드마크 타워" },
+  ];
+  function tierFromHeight(h) {
+    for (const t of TIERS) if (h <= t.max) return t;
+    return TIERS[TIERS.length - 1];
+  }
+
+  /* ================= canvas / world constants ================= */
+  const CW = 900, CH = 500;
+  const GROUND_Y = 400;
+  const WAVE_X = 150;
+
+  const canvas = $("game");
+  const ctx = canvas.getContext("2d");
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = CW * DPR;
+  canvas.height = CH * DPR;
+  ctx.scale(DPR, DPR);
+
+  /* far background skyline (parallax), generated once */
+  const farBuildings = [];
+  (function genFar() {
+    let x = 0;
+    while (x < 2200) {
+      const w = rand(40, 95), h = rand(35, 150);
+      farBuildings.push({ x, w, h });
+      x += w + rand(14, 40);
+    }
+  })();
+  const FAR_WRAP = 2200;
+
+  const SKY = [
+    ["#bfe9ff", "#eaf7ff"], ["#a3e0ff", "#e2f5ff"], ["#83d3ff", "#d4efff"],
+    ["#62c4f7", "#c3e8fb"], ["#45abe0", "#a9d8f0"], ["#3186ba", "#84b7d8"],
+    ["#22537a", "#4a7fa3"], ["#173350", "#345a7d"],
+    ["#0d1b33", "#1d3a5c"], ["#050b18", "#0d2140"],
+  ];
+
+  const STAR_SEED = [];
+  for (let i = 0; i < 60; i++) STAR_SEED.push({ x: rand(0, CW), y: rand(0, GROUND_Y - 40), r: rand(.6, 1.8), ph: rand(0, 10) });
+
+  /* ================= game state ================= */
+  let state = "title"; // title | playing | paused | over
+  let t = 0; // global animation clock
+  let lastTime = 0;
+
+  let score, exp, stageIdx, hp, eatenCount, elapsed, distanceTraveled;
+  let energy, surging, surgeBoostCurrent, baseHeight, currentHeight;
+  let spawnTimer, buildings, particles, shakeTime, shakeMag;
+
+  function currentNeed() { return STAGES[stageIdx].expToNext; }
+  function maxSurge() { return 130 + stageIdx * 14; }
+
+  function resetGame() {
+    score = 0; exp = 0; stageIdx = 0; hp = 100; eatenCount = 0; elapsed = 0; distanceTraveled = 0;
+    energy = 100; surging = false; surgeBoostCurrent = 0;
+    baseHeight = STAGES[0].height; currentHeight = baseHeight;
+    spawnTimer = 0.6; buildings = []; particles = []; shakeTime = 0; shakeMag = 0;
+  }
+
+  /* ================= particles ================= */
+  function addParticle(p) { particles.push(p); }
+  function spawnSplash(x, y) {
+    for (let i = 0; i < 12; i++) {
+      const a = rand(0, Math.PI * 2), sp = rand(40, 160);
+      addParticle({
+        type: "circle", x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60,
+        gravity: 260, r: rand(2, 5), life: rand(.4, .8), maxLife: .8,
+        color: Math.random() < .5 ? "#e1f5fe" : "#4fc3f7",
+      });
+    }
+  }
+  function spawnDebris(x, y, color) {
+    for (let i = 0; i < 10; i++) {
+      const a = rand(-Math.PI, 0), sp = rand(60, 200);
+      addParticle({
+        type: "rect", x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        gravity: 420, w: rand(3, 7), h: rand(3, 7), life: rand(.5, .9), maxLife: .9,
+        color, rot: rand(0, 6), vrot: rand(-6, 6),
+      });
+    }
+  }
+  function spawnFloatText(x, y, text, color) {
+    addParticle({ type: "text", x, y, vx: rand(-8, 8), vy: -46, gravity: -10, life: 1, maxLife: 1, text, color });
+  }
+  function spawnEvolveBurst() {
+    for (let i = 0; i < 26; i++) {
+      const a = rand(0, Math.PI * 2), sp = rand(60, 220);
+      addParticle({
+        type: "circle", x: WAVE_X, y: GROUND_Y - currentHeight, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        gravity: 120, r: rand(2, 5), life: rand(.6, 1.1), maxLife: 1.1,
+        color: Math.random() < .5 ? "#ffe082" : "#fff59d",
+      });
+    }
+  }
+
+  /* ================= evolve banner ================= */
+  let evolveBannerTimer = null;
+  function showEvolveBanner(stage) {
+    const el = $("evolve-banner");
+    el.textContent = "🎉 진화! " + stage.emoji + " " + stage.name + "!";
+    el.classList.add("show");
+    clearTimeout(evolveBannerTimer);
+    evolveBannerTimer = setTimeout(() => el.classList.remove("show"), 1400);
+  }
+
+  function checkEvolve() {
+    while (exp >= currentNeed()) {
+      const need = currentNeed();
+      exp -= need;
+      if (stageIdx < MAX_STAGE) {
+        stageIdx++;
+        baseHeight = STAGES[stageIdx].height;
+        hp = Math.min(100, hp + 20);
+        showEvolveBanner(STAGES[stageIdx]);
+        spawnEvolveBurst();
+        toast(STAGES[stageIdx].emoji + " " + STAGES[stageIdx].name + "(으)로 진화했어요!");
+      } else {
+        score += 150;
+        spawnFloatText(WAVE_X, GROUND_Y - currentHeight - 16, "🌟 전설 보너스 +150", "#ffd54f");
+      }
+    }
+  }
+
+  /* ================= building spawn / collision ================= */
+  function spawnBuilding() {
+    const ms = maxSurge();
+    const roll = Math.random();
+    let h;
+    if (roll < 0.42) h = rand(24, Math.max(30, baseHeight * 0.85));
+    else if (roll < 0.82) h = rand(baseHeight * 0.7, baseHeight + ms * 0.75);
+    else h = rand(baseHeight + ms * 0.55, baseHeight + ms * 1.2);
+    h = clamp(Math.round(h), 22, 480);
+    const w = Math.round(30 + h * 0.16 + rand(0, 18));
+    buildings.push({ x: CW + 30, w, h, resolved: false, tier: tierFromHeight(h), seed: Math.random() });
+  }
+
+  function resolveBuilding(b) {
+    b.resolved = true;
+    const cx = WAVE_X + 22, cy = GROUND_Y - b.h * 0.5;
+    if (b.h <= currentHeight) {
+      const gain = Math.round(b.h * 1.1);
+      const expGain = Math.round(b.h * 0.8);
+      score += gain; exp += expGain; eatenCount++;
+      spawnSplash(cx, cy);
+      spawnFloatText(cx, cy, "+" + gain, "#e3f2fd");
+      checkEvolve();
+    } else {
+      const overBy = b.h - currentHeight;
+      const dmg = Math.min(38, 12 + overBy * 0.09);
+      hp = Math.max(0, hp - dmg);
+      spawnDebris(cx, cy, b.tier.color);
+      spawnFloatText(cx, cy, "-" + Math.round(dmg), "#ff8a80");
+      shakeTime = 0.28; shakeMag = 8 + overBy * 0.03;
+      if (hp <= 0) triggerGameOver();
+    }
+  }
+
+  /* ================= surge / energy ================= */
+  const SURGE_RATE = 340, SURGE_FALL = 260, ENERGY_DRAIN = 42, ENERGY_REGEN = 20;
+  function updateSurge(dt) {
+    const ms = maxSurge();
+    if (surging && energy > 0) {
+      surgeBoostCurrent = Math.min(ms, surgeBoostCurrent + SURGE_RATE * dt);
+      energy = Math.max(0, energy - ENERGY_DRAIN * dt);
+      if (energy <= 0) surging = false;
+    } else {
+      surgeBoostCurrent = Math.max(0, surgeBoostCurrent - SURGE_FALL * dt);
+      energy = Math.min(100, energy + ENERGY_REGEN * dt);
+    }
+    currentHeight = baseHeight + surgeBoostCurrent;
+  }
+
+  /* ================= main update ================= */
+  function update(dt) {
+    elapsed += dt;
+    t += dt;
+    updateSurge(dt);
+
+    const scrollSpeed = clamp(150 + elapsed * 3.2, 150, 340);
+    distanceTraveled += scrollSpeed * dt;
+
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnBuilding();
+      const interval = clamp(1.15 - elapsed * 0.012, 0.48, 1.15);
+      spawnTimer = interval * rand(0.75, 1.25);
+    }
+
+    for (const b of buildings) {
+      if (!b.resolved) {
+        b.x -= scrollSpeed * dt;
+        if (b.x <= WAVE_X + 10) resolveBuilding(b);
+      }
+    }
+    buildings = buildings.filter((b) => !b.resolved);
+
+    for (const p of particles) {
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vy += (p.gravity || 0) * dt;
+      if (p.vrot) p.rot += p.vrot * dt;
+      p.life -= dt;
+    }
+    particles = particles.filter((p) => p.life > 0);
+
+    if (shakeTime > 0) shakeTime = Math.max(0, shakeTime - dt);
+
+    if (hp <= 0 && state === "playing") triggerGameOver();
+  }
+
+  /* ================= rendering ================= */
+  function drawSky() {
+    const pal = SKY[stageIdx];
+    const g = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+    g.addColorStop(0, pal[0]); g.addColorStop(1, pal[1]);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, CW, GROUND_Y);
+
+    if (stageIdx >= 6) {
+      const nightAlpha = clamp((stageIdx - 5) / 4, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = nightAlpha * 0.9;
+      for (const s of STAR_SEED) {
+        const tw = 0.5 + 0.5 * Math.sin(t * 2 + s.ph);
+        ctx.fillStyle = "rgba(255,255,255," + (0.3 + tw * 0.7) + ")";
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  function drawParallax() {
+    const darkness = clamp(stageIdx / 9, 0, 1);
+    const col = "rgba(" + Math.round(70 - darkness * 55) + "," + Math.round(95 - darkness * 70) + "," + Math.round(120 - darkness * 80) + ",0.55)";
+    ctx.fillStyle = col;
+    const offset = distanceTraveled * 0.18 % FAR_WRAP;
+    for (let pass = 0; pass < 2; pass++) {
+      const shift = pass === 0 ? -offset : -offset + FAR_WRAP;
+      for (const b of farBuildings) {
+        const x = b.x + shift;
+        if (x + b.w < 0 || x > CW) continue;
+        ctx.fillRect(x, GROUND_Y - b.h, b.w, b.h);
+      }
+    }
+  }
+
+  function drawGroundAndSea() {
+    const g = ctx.createLinearGradient(0, GROUND_Y, 0, CH);
+    g.addColorStop(0, "#0288d1");
+    g.addColorStop(1, "#01579b");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, GROUND_Y, CW, CH - GROUND_Y);
+    ctx.strokeStyle = "rgba(255,255,255,.25)";
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 5; i++) {
+      const y = GROUND_Y + 14 + i * 16;
+      const off = (t * 40 + i * 30) % 40;
+      ctx.beginPath();
+      for (let x = -40 + off; x < CW; x += 40) ctx.moveTo(x, y), ctx.lineTo(x + 20, y);
+      ctx.stroke();
+    }
+  }
+
+  function drawBuildings() {
+    for (const b of buildings) {
+      const x = b.x, h = b.h, w = b.w, y = GROUND_Y - h;
+      ctx.fillStyle = b.tier.color;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = b.tier.roof;
+      ctx.fillRect(x - 2, y - 6, w + 4, 8);
+      // windows
+      const cols = Math.max(1, Math.floor(w / 12));
+      const rows = Math.max(1, Math.floor(h / 16));
+      const seedInt = Math.floor(b.seed * 997);
+      ctx.fillStyle = "rgba(255,255,255,.15)";
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const lit = (r * cols + c + seedInt) % 3 === 0;
+          ctx.fillStyle = lit ? "rgba(255,245,157,.9)" : "rgba(255,255,255,.18)";
+          ctx.fillRect(x + 4 + c * 12, y + 6 + r * 16, 6, 8);
+        }
+      }
+    }
+  }
+
+  function drawWave() {
+    const topY = GROUND_Y - currentHeight;
+    const crestX = WAVE_X + Math.sin(t * 4) * 6;
+    const crestY = topY + Math.sin(t * 3) * 4;
+    ctx.save();
+    const grad = ctx.createLinearGradient(0, topY - 20, 0, GROUND_Y);
+    grad.addColorStop(0, "#81d4fa");
+    grad.addColorStop(0.45, "#29b6f6");
+    grad.addColorStop(1, "#01579b");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND_Y + 6);
+    ctx.lineTo(0, topY + 12);
+    ctx.quadraticCurveTo(WAVE_X * 0.4, topY - 16, crestX, crestY);
+    ctx.quadraticCurveTo(crestX + 36, crestY + 20, WAVE_X + 48, GROUND_Y - 6);
+    ctx.lineTo(WAVE_X + 74, GROUND_Y + 6);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(255,255,255,.9)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(0, topY + 12);
+    ctx.quadraticCurveTo(WAVE_X * 0.4, topY - 16, crestX, crestY);
+    ctx.stroke();
+
+    // foam bubbles near crest
+    ctx.fillStyle = "rgba(255,255,255,.75)";
+    for (let i = 0; i < 6; i++) {
+      const bx = crestX - i * 14 + Math.sin(t * 5 + i) * 4;
+      const by = crestY + Math.cos(t * 4 + i) * 5;
+      ctx.beginPath(); ctx.arc(bx, by, 3, 0, 7); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      const alpha = clamp(p.life / p.maxLife, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      if (p.type === "circle") {
+        ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+      } else if (p.type === "rect") {
+        ctx.translate(p.x, p.y); ctx.rotate(p.rot || 0);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      } else if (p.type === "text") {
+        ctx.fillStyle = p.color;
+        ctx.font = "800 16px 'Apple SD Gothic Neo','Malgun Gothic',sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(p.text, p.x, p.y);
+      }
+      ctx.restore();
+    }
+  }
+
+  function render() {
+    ctx.save();
+    if (shakeTime > 0) {
+      ctx.translate(rand(-shakeMag, shakeMag), rand(-shakeMag, shakeMag));
+    }
+    ctx.clearRect(-20, -20, CW + 40, CH + 40);
+    drawSky();
+    drawParallax();
+    drawGroundAndSea();
+    drawBuildings();
+    drawWave();
+    drawParticles();
+    ctx.restore();
+  }
+
+  /* ================= HUD ================= */
+  function updateHUD() {
+    $("stage-badge").textContent = STAGES[stageIdx].emoji + " " + STAGES[stageIdx].name;
+    $("score-val").textContent = score;
+    $("eaten-val").textContent = eatenCount;
+    $("best-inline").textContent = Math.max(getBest(), score);
+    $("hp-num").textContent = Math.round(hp);
+    const hpFill = $("hp-fill");
+    hpFill.style.width = hp + "%";
+    hpFill.classList.toggle("low", hp < 30);
+    const need = currentNeed();
+    $("exp-fill").style.width = clamp((exp / need) * 100, 0, 100) + "%";
+    $("next-stage-name").textContent = stageIdx < MAX_STAGE ? STAGES[stageIdx + 1].name : "MAX (보너스 모드)";
+    $("energy-fill").style.width = energy + "%";
+    $("btn-surge").classList.toggle("pressed", surging);
+  }
+
+  /* ================= game flow ================= */
+  function startGame() {
+    resetGame();
+    state = "playing";
+    showScreen("screen-game");
+    $("pause-overlay").classList.remove("show");
+  }
+
+  function togglePause() {
+    if (state === "playing") {
+      state = "paused";
+      $("pause-overlay").classList.add("show");
+    } else if (state === "paused") {
+      state = "playing";
+      $("pause-overlay").classList.remove("show");
+    }
+  }
+
+  function triggerGameOver() {
+    if (state !== "playing") return;
+    state = "over";
+    const best = getBest();
+    const isRecord = score > best;
+    if (isRecord) setBest(score);
+
+    $("result-emoji").textContent = STAGES[stageIdx].emoji;
+    $("result-title").textContent = "게임 종료!";
+    $("result-sub").textContent = "도달 단계: " + STAGES[stageIdx].name;
+    $("new-record-badge").style.display = isRecord ? "inline-block" : "none";
+    $("res-score").textContent = score;
+    $("res-eaten").textContent = eatenCount;
+    $("res-time").textContent = Math.round(elapsed) + "초";
+    $("res-best").textContent = Math.max(best, score);
+
+    showScreen("screen-over");
+  }
+
+  function backToTitle() {
+    state = "title";
+    $("best-score-start").textContent = getBest();
+    showScreen("screen-start");
+  }
+
+  /* ================= input ================= */
+  function setSurging(v) { if (state === "playing") surging = v; else if (!v) surging = false; }
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
+      if (state === "playing") e.preventDefault();
+      setSurging(true);
+    } else if (e.code === "KeyP" || e.code === "Escape") {
+      if (state === "playing" || state === "paused") togglePause();
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") setSurging(false);
+  });
+
+  const surgeBtn = $("btn-surge");
+  surgeBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); setSurging(true); try { surgeBtn.setPointerCapture(e.pointerId); } catch (err) {} });
+  ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => surgeBtn.addEventListener(ev, () => setSurging(false)));
+  surgeBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  canvas.addEventListener("pointerdown", (e) => { e.preventDefault(); setSurging(true); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => canvas.addEventListener(ev, () => setSurging(false)));
+
+  $("btn-start").addEventListener("click", startGame);
+  $("btn-retry").addEventListener("click", startGame);
+  $("btn-to-title").addEventListener("click", backToTitle);
+  $("btn-quit-game").addEventListener("click", () => { state = "title"; backToTitle(); });
+  $("btn-pause").addEventListener("click", togglePause);
+  $("btn-resume").addEventListener("click", togglePause);
+
+  /* ================= main loop ================= */
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (!lastTime) lastTime = now;
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    if (state === "playing") update(dt);
+    if (state === "playing" || state === "paused") {
+      render();
+      updateHUD();
+    }
+  }
+
+  /* ================= init ================= */
+  function buildStageRoadmap() {
+    const wrap = $("stage-roadmap");
+    wrap.innerHTML = "";
+    STAGES.forEach((s, i) => {
+      const el = document.createElement("div");
+      el.className = "stage-chip";
+      el.innerHTML = '<div class="n">' + (i + 1) + "단계</div><div class=\"e\">" + s.emoji + '</div><div>' + s.name + "</div>";
+      wrap.appendChild(el);
+    });
+  }
+
+  resetGame();
+  buildStageRoadmap();
+  $("best-score-start").textContent = getBest();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
