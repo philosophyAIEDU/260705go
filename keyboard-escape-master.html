@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<!--
+  키보드 탈출 (Keyboard Escape) — 정확한 타이핑으로 키보드를 밝힐수록 레벨이 오르는 탈출 게임
+  바둑/장기/체스/축구수학/영어/파도 마스터와 동일한 아키텍처 관례(단일 HTML, 인라인 CSS/JS,
+  외부 라이브러리 없음, .screen/.screen.active 전환, localStorage 저장)를 재사용한다.
+  캔버스 없이 순수 DOM/CSS로 구현하는 실시간 타이핑 액션 게임이다.
+
+  게임 규칙
+  - 화면에 나온 단어를 정확하게 타이핑하면 해당 알파벳 키가 가상 키보드에서 밝아진다.
+  - 26개 키를 전부 밝히면 방(레벨)을 탈출하고 다음 방으로 넘어간다. 즉, 키보드가
+    밝을수록 레벨이 올라간다.
+  - 남은 시간이 자원이다: 단어를 완성하면 시간이 늘고, 잘못 입력하면 시간이 줄어든다.
+  - 레벨이 오를수록 시간이 조금씩 더 빨리 줄어든다(방이 조여든다).
+  - 시간이 0이 되면 탈출 실패로 게임 종료.
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>키보드 탈출 — 밝을수록 레벨업하는 타이핑 게임</title>
+<style>
+  :root {
+    --fs: 16px; --btn-h: 44px;
+    --ink: #f1ecff; --paper: #241a44;
+    --accent: #f9a825; --accent-2: #7c4dff; --warn: #ff5252;
+    --card: #2d2158; --shadow: 0 2px 10px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { touch-action: manipulation; }
+  body {
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    font-size: var(--fs); background: linear-gradient(160deg, #150f2b, #2a1c4f);
+    color: var(--ink); min-height: 100vh;
+  }
+  .screen { display: none; max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+  .screen.active { display: block; }
+  h1 { font-size: 1.9em; margin-bottom: .3em; }
+  h2 { font-size: 1.25em; margin: .6em 0 .4em; }
+  .subtitle { color: #c3b6f0; margin-bottom: 1.2em; line-height: 1.6; }
+
+  button {
+    font-family: inherit; font-size: 1em; cursor: pointer;
+    border: none; border-radius: 12px; min-height: var(--btn-h);
+    padding: 8px 20px; background: var(--accent); color: #1a1033;
+    box-shadow: var(--shadow); font-weight: 800; transition: transform .08s, filter .15s;
+    -webkit-user-select: none; user-select: none;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:active { transform: scale(.97); }
+  button.secondary { background: #382a63; color: #fff; border: 2px solid #5b48a0; }
+  button.big { font-size: 1.2em; padding: 14px 34px; }
+
+  .panel { background: var(--paper); border-radius: 16px; padding: 20px; box-shadow: var(--shadow); margin-bottom: 16px; border: 1px solid #3c2d70; }
+  .how-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .how-list li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.5; }
+  .how-list .ico { font-size: 1.3em; flex: none; }
+  .best-line { font-weight: 800; color: var(--accent); margin-bottom: 14px; }
+
+  /* ---- game screen ---- */
+  .top-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+  #level-badge { font-weight: 800; font-size: 1.1em; background: var(--paper); border: 1px solid #4a3980; border-radius: 999px; padding: 6px 16px; box-shadow: var(--shadow); }
+  .stat-pill { background: var(--paper); border: 1px solid #4a3980; border-radius: 999px; padding: 6px 14px; box-shadow: var(--shadow); font-size: .9em; font-weight: 700; }
+  .stat-pill b { color: var(--accent); }
+  .top-bar .spacer { flex: 1; }
+
+  .bars-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+  .bar-block { flex: 1 1 220px; min-width: 180px; }
+  .bar-label { font-size: .78em; font-weight: 700; margin-bottom: 3px; display: flex; justify-content: space-between; color: #c3b6f0; }
+  .bar-track { background: #1d1538; border-radius: 999px; height: 14px; overflow: hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,.4); }
+  .bar-fill { height: 100%; border-radius: 999px; transition: width .12s linear; }
+  #time-fill { background: linear-gradient(90deg, #26c6da, #00838f); }
+  #time-fill.low { background: linear-gradient(90deg, #ff7043, #d32f2f); }
+  #bright-fill { background: linear-gradient(90deg, #ffe082, #f9a825); }
+
+  .room-scene {
+    position: relative; border-radius: 18px; overflow: hidden; box-shadow: var(--shadow);
+    background: radial-gradient(ellipse at 50% 30%, #2d2158, #120c26 75%);
+    padding: 26px 16px 22px; text-align: center; border: 1px solid #3c2d70;
+  }
+  .room-glow {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 35%, rgba(249,168,37,.65), transparent 65%);
+    opacity: .05; transition: opacity .25s;
+  }
+  .door { font-size: 3.4em; filter: drop-shadow(0 0 4px rgba(249,168,37,.15)); transition: filter .25s; position: relative; }
+  .room-caption { color: #b3a3e6; font-size: .85em; margin-top: 4px; position: relative; }
+
+  #escape-banner {
+    position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%) scale(.7);
+    background: rgba(20,12,40,.92); color: #ffe082; font-weight: 900; font-size: 1.4em;
+    padding: 14px 26px; border-radius: 16px; opacity: 0; pointer-events: none; text-align: center;
+    transition: opacity .25s, transform .25s; white-space: nowrap; box-shadow: 0 6px 24px rgba(0,0,0,.5); z-index: 5;
+  }
+  #escape-banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+  .word-box { margin: 18px auto 6px; font-size: 2.1em; font-weight: 800; letter-spacing: 3px; position: relative; min-height: 1.4em; font-family: "Consolas", "Menlo", monospace; }
+  .word-box .ch { display: inline-block; padding: 0 2px; color: #4a3980; }
+  .word-box .ch.typed { color: #7bffb0; text-shadow: 0 0 8px rgba(123,255,176,.5); }
+  .word-box .ch.current { color: var(--accent); text-shadow: 0 0 10px rgba(249,168,37,.7); border-bottom: 3px solid var(--accent); }
+  .word-box.shake { animation: shake .28s; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-8px)} 40%{transform:translateX(8px)} 60%{transform:translateX(-5px)} 80%{transform:translateX(5px)} }
+
+  .kbd { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 18px; }
+  .kbd-row { display: flex; gap: 6px; }
+  .key {
+    width: 34px; height: 40px; border-radius: 8px; background: #1d1538; border: 1px solid #392a68;
+    color: #6a5aa0; display: flex; align-items: center; justify-content: center; font-weight: 800;
+    font-size: .85em; transition: background .15s, color .15s, box-shadow .15s, transform .1s; cursor: pointer;
+    -webkit-user-select: none; user-select: none;
+  }
+  .key.lit { background: linear-gradient(160deg, #ffe082, #f9a825); color: #2a1c00; box-shadow: 0 0 10px rgba(249,168,37,.75); border-color: #f9a825; }
+  .key.next { box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(249,168,37,.6); animation: pulse 1s infinite; }
+  .key.pressed { transform: scale(.88); }
+  .key.wrong { background: #4a1a24; color: #ff8a80; border-color: #ff5252; }
+  @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.6 } }
+
+  .combo-tag { display: inline-block; background: #3c2d70; color: #ffe082; border-radius: 999px; padding: 2px 12px; font-size: .82em; font-weight: 800; margin-top: 10px; }
+
+  .result-card { text-align: center; padding: 30px 20px; }
+  .result-emoji { font-size: 3em; margin-bottom: 6px; }
+  .result-title { font-size: 1.7em; font-weight: 800; margin-bottom: 4px; }
+  .result-sub { color: #c3b6f0; margin-bottom: 18px; }
+  .result-stats { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-bottom: 22px; }
+  .result-stats .stat { background: var(--paper); border: 1px solid #4a3980; border-radius: 14px; padding: 14px 20px; min-width: 120px; box-shadow: var(--shadow); }
+  .result-stats .stat .v { font-size: 1.5em; font-weight: 800; color: var(--accent); }
+  .result-stats .stat .k { font-size: .8em; color: #c3b6f0; }
+  .newrecord { display: inline-block; background: #4a3980; color: #ffe082; border: 2px solid var(--accent); border-radius: 999px; padding: 4px 16px; font-weight: 800; margin-bottom: 16px; }
+  .result-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: rgba(20,12,40,.95); color: #fff; padding: 10px 22px; border-radius: 999px;
+    font-size: .95em; opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 50;
+    max-width: 90vw; text-align: center; border: 1px solid #4a3980;
+  }
+  #toast.show { opacity: 1; }
+
+  @media (max-width: 480px) {
+    .key { width: 26px; height: 34px; font-size: .72em; }
+    .word-box { font-size: 1.5em; }
+  }
+</style>
+</head>
+<body>
+
+<div id="screen-start" class="screen active">
+  <h1>⌨️ 키보드 탈출</h1>
+  <p class="subtitle">정확하게 타이핑해서 키보드를 전부 밝히면 방을 탈출해요.<br>키보드가 밝을수록 레벨이 올라갑니다. 몇 번째 방까지 탈출할 수 있을까요?</p>
+
+  <div class="panel">
+    <div class="best-line">🏆 최고 기록: <span id="best-line-text">레벨 1 · 0점</span></div>
+    <h2>게임 방법</h2>
+    <ul class="how-list">
+      <li><span class="ico">⌨️</span><span>화면에 나온 단어를 순서대로 정확히 타이핑하세요.</span></li>
+      <li><span class="ico">💡</span><span>맞는 글자를 입력할 때마다 해당 키보드 키가 <b>밝아져요</b>.</span></li>
+      <li><span class="ico">🚪</span><span>알파벳 26개 키를 모두 밝히면 문이 열리고 <b>다음 방(레벨)</b>으로!</span></li>
+      <li><span class="ico">⏳</span><span>시간이 0이 되면 탈출 실패. 단어를 완성하면 시간이 늘고, 틀리면 줄어들어요.</span></li>
+      <li><span class="ico">🔥</span><span>레벨이 오를수록 방이 조금씩 더 빨리 조여들어요(시간이 더 빨리 줄어요).</span></li>
+    </ul>
+  </div>
+
+  <div style="text-align:center">
+    <button class="big" id="btn-start">🔓 탈출 시작</button>
+  </div>
+</div>
+
+<div id="screen-game" class="screen">
+  <div class="top-bar">
+    <span id="level-badge">🚪 1번 방</span>
+    <span class="stat-pill">점수 <b id="score-val">0</b></span>
+    <span class="stat-pill">🔥 콤보 <b id="combo-val">0</b></span>
+    <span class="stat-pill">🏆 <b id="best-inline">레벨 1</b></span>
+    <span class="spacer"></span>
+    <button class="secondary" id="btn-quit-game">← 나가기</button>
+  </div>
+
+  <div class="bars-row">
+    <div class="bar-block">
+      <div class="bar-label"><span>⏳ 남은 시간</span><span id="time-num">60초</span></div>
+      <div class="bar-track"><div class="bar-fill" id="time-fill" style="width:100%"></div></div>
+    </div>
+    <div class="bar-block">
+      <div class="bar-label"><span>💡 밝기</span><span id="bright-num">0/26</span></div>
+      <div class="bar-track"><div class="bar-fill" id="bright-fill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="room-scene">
+    <div class="room-glow" id="room-glow"></div>
+    <div class="door" id="door-emoji">🚪</div>
+    <div class="room-caption">이 단어를 타이핑하세요</div>
+    <div id="escape-banner"></div>
+
+    <div class="word-box" id="word-box"></div>
+    <div class="combo-tag" id="combo-tag" style="visibility:hidden">🔥 콤보 x0</div>
+
+    <div class="kbd" id="kbd"></div>
+  </div>
+</div>
+
+<div id="screen-over" class="screen">
+  <div class="result-card">
+    <div class="result-emoji" id="result-emoji">🔒</div>
+    <div class="result-title" id="result-title">탈출 실패...</div>
+    <div class="result-sub" id="result-sub">도달한 방: 1번 방</div>
+    <div id="new-record-badge" class="newrecord" style="display:none">🎉 신기록 달성!</div>
+    <div class="result-stats">
+      <div class="stat"><div class="v" id="res-level">1</div><div class="k">도달 레벨</div></div>
+      <div class="stat"><div class="v" id="res-score">0</div><div class="k">최종 점수</div></div>
+      <div class="stat"><div class="v" id="res-words">0</div><div class="k">완성한 단어</div></div>
+      <div class="stat"><div class="v" id="res-acc">100%</div><div class="k">정확도</div></div>
+    </div>
+    <div class="result-btns">
+      <button class="big" id="btn-retry">🔄 다시 도전</button>
+      <button class="secondary big" id="btn-to-title">← 처음으로</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  function showScreen(id) {
+    document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+    $(id).classList.add("active");
+  }
+
+  let toastTimer = null;
+  function toast(msg) {
+    const el = $("toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
+  }
+
+  const BEST_KEY = "keyboardEscapeBest";
+  function getBest() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(BEST_KEY) || "null");
+      if (raw && typeof raw.level === "number" && typeof raw.score === "number") return raw;
+    } catch (e) {}
+    return { level: 1, score: 0 };
+  }
+  function setBest(level, score) { try { localStorage.setItem(BEST_KEY, JSON.stringify({ level, score })); } catch (e) {} }
+  function bestLabel(b) { return "레벨 " + b.level + " · " + b.score + "점"; }
+
+  /* ================= word bank (알파벳 26개가 고루 등장하도록 희귀 글자 포함 단어 포함) ================= */
+  const WORD_BANK = [
+    "door","room","key","lock","exit","light","dark","shadow","escape","puzzle","riddle",
+    "secret","clue","trap","cage","maze","vault","code","alarm","guard","climb","crawl",
+    "search","hidden","final","gate","lever","switch","panel","wire","spark","flash","glow",
+    "bright","dim","night","dawn","hope","brave","clever","quick","silent","careful","danger",
+    "safe","free","win","time","clock","tick","rush","hurry","press","type","enter","open",
+    "close","turn","push","pull","move","step","floor","wall","stair","attic","cellar",
+    "candle","torch","lamp","mirror","window","curtain","carpet","statue","paint","dust",
+    "book","paper","letter","symbol","number","pattern","shape","color","sound","echo",
+    "whisper","silence","breath","heart","mind","brain","dream","fear","calm","focus",
+    "jazz","quiz","waxy","zephyr","jinx","quartz","wizard","exodus","jukebox","fizzy",
+    "buzz","yacht","vex","waltz","exam","joke","kiwi","fox","box","zoo","yoga","oxygen",
+    "juice","zebra","fuzzy","jelly","expert","exact","exotic","jungle","jacket","knight",
+    "wax","jam","java","jazzy","voice","view","vivid","vapor","velvet","victory","vault",
+    "quest","query","quiet","quote","equip","liquid","frequency","unique","squeeze",
+    "hex","fix","mix","axis","exile","excel","flex","boxer","toxic","waxed"
+  ];
+
+  function pickWord(litSet, prevWord) {
+    const unlit = [];
+    for (let i = 0; i < 26; i++) { const c = String.fromCharCode(65 + i); if (!litSet.has(c)) unlit.push(c); }
+    let candidates = WORD_BANK.filter((w) => {
+      const up = w.toUpperCase();
+      return unlit.some((c) => up.indexOf(c) !== -1);
+    });
+    if (candidates.length === 0) candidates = WORD_BANK;
+    if (candidates.length > 1 && prevWord) candidates = candidates.filter((w) => w !== prevWord).concat(candidates.length > 1 ? [] : [prevWord]);
+    return candidates[Math.floor(Math.random() * candidates.length)].toUpperCase();
+  }
+
+  /* ================= keyboard viz ================= */
+  const KEY_ROWS = [
+    ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+    ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
+    ["Z", "X", "C", "V", "B", "N", "M"],
+  ];
+  const keyEls = {};
+  function buildKeyboard() {
+    const wrap = $("kbd");
+    wrap.innerHTML = "";
+    KEY_ROWS.forEach((row) => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "kbd-row";
+      row.forEach((ch) => {
+        const el = document.createElement("div");
+        el.className = "key";
+        el.textContent = ch;
+        el.addEventListener("pointerdown", (e) => { e.preventDefault(); handleLetter(ch); });
+        rowEl.appendChild(el);
+        keyEls[ch] = el;
+      });
+      wrap.appendChild(rowEl);
+    });
+  }
+
+  /* ================= game state ================= */
+  let state = "title"; // title | playing | over
+  let level, score, combo, litKeys, timeLeft, maxTime, currentWord, typedIndex;
+  let wordsCompleted, totalKeystrokes, correctKeystrokes, prevWord;
+  let lastTime = 0;
+
+  function timeRate() { return clamp(1 + level * 0.025, 1, 2.2); }
+
+  function resetGame() {
+    level = 1; score = 0; combo = 0; litKeys = new Set();
+    maxTime = 60; timeLeft = maxTime;
+    wordsCompleted = 0; totalKeystrokes = 0; correctKeystrokes = 0; prevWord = null;
+    currentWord = pickWord(litKeys, null); typedIndex = 0;
+  }
+
+  function renderWord() {
+    const box = $("word-box");
+    box.innerHTML = "";
+    for (let i = 0; i < currentWord.length; i++) {
+      const span = document.createElement("span");
+      span.className = "ch" + (i < typedIndex ? " typed" : i === typedIndex ? " current" : "");
+      span.textContent = currentWord[i];
+      box.appendChild(span);
+    }
+  }
+
+  function updateNextKeyHighlight() {
+    Object.values(keyEls).forEach((el) => el.classList.remove("next"));
+    if (typedIndex < currentWord.length) {
+      const el = keyEls[currentWord[typedIndex]];
+      if (el) el.classList.add("next");
+    }
+  }
+
+  function flashKey(ch, cls) {
+    const el = keyEls[ch];
+    if (!el) return;
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), 220);
+  }
+
+  function updateHUD() {
+    $("level-badge").textContent = "🚪 " + level + "번 방";
+    $("score-val").textContent = score;
+    $("combo-val").textContent = combo;
+    const best = getBest();
+    $("best-inline").textContent = "레벨 " + Math.max(best.level, level);
+
+    const timeFill = $("time-fill");
+    const pct = clamp((timeLeft / maxTime) * 100, 0, 100);
+    timeFill.style.width = pct + "%";
+    timeFill.classList.toggle("low", timeLeft < maxTime * 0.25);
+    $("time-num").textContent = Math.ceil(timeLeft) + "초";
+
+    const brightPct = (litKeys.size / 26) * 100;
+    $("bright-fill").style.width = brightPct + "%";
+    $("bright-num").textContent = litKeys.size + "/26";
+
+    $("room-glow").style.opacity = 0.05 + (litKeys.size / 26) * 0.85;
+    $("door-emoji").style.filter = "drop-shadow(0 0 " + (4 + litKeys.size * 1.4) + "px rgba(249,168,37," + (0.15 + litKeys.size / 26 * 0.75) + "))";
+
+    const comboTag = $("combo-tag");
+    if (combo >= 2) { comboTag.style.visibility = "visible"; comboTag.textContent = "🔥 콤보 x" + combo; }
+    else comboTag.style.visibility = "hidden";
+  }
+
+  let bannerTimer = null;
+  function showEscapeBanner(text) {
+    const el = $("escape-banner");
+    el.textContent = text;
+    el.classList.add("show");
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => el.classList.remove("show"), 1300);
+  }
+
+  function nextWord() {
+    prevWord = currentWord;
+    currentWord = pickWord(litKeys, prevWord);
+    typedIndex = 0;
+    renderWord();
+    updateNextKeyHighlight();
+  }
+
+  function levelUp() {
+    level++;
+    litKeys.clear();
+    Object.values(keyEls).forEach((el) => el.classList.remove("lit"));
+    timeLeft = Math.min(maxTime, timeLeft + 10);
+    score += 150 + level * 20;
+    showEscapeBanner("🔓 탈출 성공! " + level + "번 방으로 이동!");
+    toast("🚪 " + level + "번 방으로 넘어갔어요!");
+    nextWord();
+  }
+
+  function handleLetter(ch) {
+    if (state !== "playing") return;
+    totalKeystrokes++;
+    const expected = currentWord[typedIndex];
+    if (ch === expected) {
+      correctKeystrokes++;
+      typedIndex++;
+      if (!litKeys.has(ch)) { litKeys.add(ch); flashKey(ch, "pressed"); keyEls[ch].classList.add("lit"); }
+      else flashKey(ch, "pressed");
+      renderWord();
+      if (typedIndex >= currentWord.length) {
+        wordsCompleted++;
+        combo++;
+        score += currentWord.length * 10;
+        timeLeft = Math.min(maxTime, timeLeft + 4);
+        if (litKeys.size >= 26) levelUp();
+        else nextWord();
+      } else {
+        updateNextKeyHighlight();
+      }
+    } else {
+      combo = 0;
+      timeLeft = Math.max(0, timeLeft - 2);
+      flashKey(ch, "wrong");
+      const box = $("word-box");
+      box.classList.remove("shake"); void box.offsetWidth; box.classList.add("shake");
+      if (timeLeft <= 0) triggerGameOver();
+    }
+  }
+
+  /* ================= flow ================= */
+  function startGame() {
+    resetGame();
+    state = "playing";
+    showScreen("screen-game");
+    renderWord();
+    updateNextKeyHighlight();
+  }
+
+  function triggerGameOver() {
+    if (state !== "playing") return;
+    state = "over";
+    const best = getBest();
+    const isRecord = level > best.level || (level === best.level && score > best.score);
+    if (isRecord) setBest(level, score);
+
+    $("result-emoji").textContent = level >= 8 ? "🏆" : level >= 4 ? "🗝️" : "🔒";
+    $("result-title").textContent = "탈출 실패...";
+    $("result-sub").textContent = "도달한 방: " + level + "번 방";
+    $("new-record-badge").style.display = isRecord ? "inline-block" : "none";
+    $("res-level").textContent = level;
+    $("res-score").textContent = score;
+    $("res-words").textContent = wordsCompleted;
+    $("res-acc").textContent = totalKeystrokes > 0 ? Math.round((correctKeystrokes / totalKeystrokes) * 100) + "%" : "100%";
+
+    showScreen("screen-over");
+  }
+
+  function backToTitle() {
+    state = "title";
+    $("best-line-text").textContent = bestLabel(getBest());
+    showScreen("screen-start");
+  }
+
+  /* ================= input ================= */
+  window.addEventListener("keydown", (e) => {
+    if (state !== "playing") return;
+    const k = e.key;
+    if (k.length === 1 && /[a-zA-Z]/.test(k)) { e.preventDefault(); handleLetter(k.toUpperCase()); }
+  });
+
+  $("btn-start").addEventListener("click", startGame);
+  $("btn-retry").addEventListener("click", startGame);
+  $("btn-to-title").addEventListener("click", backToTitle);
+  $("btn-quit-game").addEventListener("click", backToTitle);
+
+  /* ================= main loop ================= */
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (!lastTime) lastTime = now;
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+
+    if (state === "playing") {
+      timeLeft = Math.max(0, timeLeft - timeRate() * dt);
+      if (timeLeft <= 0) triggerGameOver();
+    }
+    if (state === "playing") updateHUD();
+  }
+
+  /* ================= init ================= */
+  buildKeyboard();
+  $("best-line-text").textContent = bestLabel(getBest());
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
