@@ -243,16 +243,16 @@
 
   /* ================= evolution stages ================= */
   const STAGES = [
-    { name: "잔물결",       emoji: "💧",     height: 42,  expToNext: 110 },
-    { name: "너울",         emoji: "🌊",     height: 64,  expToNext: 160 },
-    { name: "파도",         emoji: "🌊",     height: 90,  expToNext: 230 },
-    { name: "큰 파도",      emoji: "🌊🌊",   height: 120, expToNext: 320 },
-    { name: "높은 파도",    emoji: "🌊✨",   height: 155, expToNext: 430 },
-    { name: "폭풍 파도",    emoji: "🌪️🌊",  height: 195, expToNext: 560 },
-    { name: "해일",         emoji: "🌀",     height: 240, expToNext: 720 },
-    { name: "쓰나미",       emoji: "🌊⚡",   height: 290, expToNext: 900 },
-    { name: "메가 쓰나미",  emoji: "⚡🌊⚡", height: 345, expToNext: 1100 },
-    { name: "전설의 파도",  emoji: "👑🌊",   height: 400, expToNext: 300 }, // 최고단계 도달 후엔 보너스 임계값
+    { name: "잔물결",       emoji: "💧",     height: 42,  expToNext: 80 },
+    { name: "너울",         emoji: "🌊",     height: 64,  expToNext: 120 },
+    { name: "파도",         emoji: "🌊",     height: 90,  expToNext: 170 },
+    { name: "큰 파도",      emoji: "🌊🌊",   height: 120, expToNext: 240 },
+    { name: "높은 파도",    emoji: "🌊✨",   height: 155, expToNext: 320 },
+    { name: "폭풍 파도",    emoji: "🌪️🌊",  height: 195, expToNext: 420 },
+    { name: "해일",         emoji: "🌀",     height: 240, expToNext: 540 },
+    { name: "쓰나미",       emoji: "🌊⚡",   height: 290, expToNext: 680 },
+    { name: "메가 쓰나미",  emoji: "⚡🌊⚡", height: 345, expToNext: 820 },
+    { name: "전설의 파도",  emoji: "👑🌊",   height: 400, expToNext: 260 }, // 최고단계 도달 후엔 보너스 임계값
   ];
   const MAX_STAGE = STAGES.length - 1;
 
@@ -377,7 +377,7 @@
       if (stageIdx < MAX_STAGE) {
         stageIdx++;
         baseHeight = STAGES[stageIdx].height;
-        hp = Math.min(100, hp + 20);
+        hp = Math.min(100, hp + 30);
         showEvolveBanner(STAGES[stageIdx]);
         spawnEvolveBurst();
         toast(STAGES[stageIdx].emoji + " " + STAGES[stageIdx].name + "(으)로 진화했어요!");
@@ -393,9 +393,9 @@
     const ms = maxSurge();
     const roll = Math.random();
     let h;
-    if (roll < 0.42) h = rand(24, Math.max(30, baseHeight * 0.85));
-    else if (roll < 0.82) h = rand(baseHeight * 0.7, baseHeight + ms * 0.75);
-    else h = rand(baseHeight + ms * 0.55, baseHeight + ms * 1.2);
+    if (roll < 0.55) h = rand(20, Math.max(30, baseHeight * 0.8));
+    else if (roll < 0.88) h = rand(baseHeight * 0.55, baseHeight + ms * 0.6);
+    else h = rand(baseHeight + ms * 0.45, baseHeight + ms * 0.95);
     h = clamp(Math.round(h), 22, 480);
     const w = Math.round(30 + h * 0.16 + rand(0, 18));
     buildings.push({ x: CW + 30, w, h, resolved: false, tier: tierFromHeight(h), seed: Math.random() });
@@ -413,7 +413,7 @@
       checkEvolve();
     } else {
       const overBy = b.h - currentHeight;
-      const dmg = Math.min(38, 12 + overBy * 0.09);
+      const dmg = Math.min(24, 7 + overBy * 0.055);
       hp = Math.max(0, hp - dmg);
       spawnDebris(cx, cy, b.tier.color);
       spawnFloatText(cx, cy, "-" + Math.round(dmg), "#ff8a80");
@@ -423,7 +423,7 @@
   }
 
   /* ================= surge / energy ================= */
-  const SURGE_RATE = 340, SURGE_FALL = 260, ENERGY_DRAIN = 42, ENERGY_REGEN = 20;
+  const SURGE_RATE = 380, SURGE_FALL = 260, ENERGY_DRAIN = 32, ENERGY_REGEN = 28;
   function updateSurge(dt) {
     const ms = maxSurge();
     if (surging && energy > 0) {
@@ -443,13 +443,13 @@
     t += dt;
     updateSurge(dt);
 
-    const scrollSpeed = clamp(150 + elapsed * 3.2, 150, 340);
+    const scrollSpeed = clamp(130 + elapsed * 2.0, 130, 280);
     distanceTraveled += scrollSpeed * dt;
 
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
       spawnBuilding();
-      const interval = clamp(1.15 - elapsed * 0.012, 0.48, 1.15);
+      const interval = clamp(1.35 - elapsed * 0.008, 0.65, 1.35);
       spawnTimer = interval * rand(0.75, 1.25);
     }
 
